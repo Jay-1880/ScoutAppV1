@@ -196,11 +196,14 @@ export const getWorkspace = query({
     const techMessages = event
       ? await ctx.db.query("techMessages").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
       : []
+    const pitCrewItems = event
+      ? await ctx.db.query("pitCrewItems").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
+      : []
     const profiles = role === "admin" ? await ctx.db.query("profiles").collect() : []
     const tbaSetting = role === "admin"
       ? await ctx.db.query("appSettings").withIndex("key", (q) => q.eq("key", "tbaApiKey")).unique()
       : null
-    return { userId, profile, event, teams, matches, reports, pitReports, picklists, picklistEntries, techMessages, profiles, hasTbaApiKey: Boolean(tbaSetting?.value) }
+    return { userId, profile, event, teams, matches, reports, pitReports, picklists, picklistEntries, techMessages, pitCrewItems, profiles, hasTbaApiKey: Boolean(tbaSetting?.value) }
   },
 })
 
@@ -525,7 +528,6 @@ export const ensurePicklist = mutation({
 export const createTechMessage = mutation({
   args: {
     eventId: v.id("events"),
-    teamId: v.optional(v.id("teams")),
     message: v.string(),
   },
   handler: async (ctx, args) => {
@@ -534,7 +536,6 @@ export const createTechMessage = mutation({
     if (!message) throw new Error("Tech note is required.")
     return ctx.db.insert("techMessages", {
       eventId: args.eventId,
-      teamId: args.teamId,
       createdBy: userId,
       message,
       status: "open",
@@ -551,6 +552,48 @@ export const resolveTechMessage = mutation({
       status: "resolved",
       resolvedAt: Date.now(),
       resolvedBy: userId,
+    })
+  },
+})
+
+export const createPitCrewItem = mutation({
+  args: {
+    eventId: v.id("events"),
+    borrowerName: v.string(),
+    borrowerTeam: v.string(),
+    itemName: v.string(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "pit"])
+    const borrowerName = args.borrowerName.trim()
+    const borrowerTeam = args.borrowerTeam.trim()
+    const itemName = args.itemName.trim()
+    const notes = args.notes?.trim()
+    if (!borrowerName || !borrowerTeam || !itemName) {
+      throw new Error("Borrower, team, and item are required.")
+    }
+    return ctx.db.insert("pitCrewItems", {
+      eventId: args.eventId,
+      createdBy: userId,
+      borrowerName,
+      borrowerTeam,
+      itemName,
+      notes: notes || undefined,
+      status: "borrowed",
+      createdAt: Date.now(),
+    })
+  },
+})
+
+export const markPitCrewItemReturned = mutation({
+  args: { itemId: v.id("pitCrewItems") },
+  handler: async (ctx, args) => {
+    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "pit"])
+    await ctx.db.patch(args.itemId, {
+      status: "returned",
+      returnedAt: Date.now(),
+      returnedBy: userId,
     })
   },
 })

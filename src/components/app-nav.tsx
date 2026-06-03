@@ -8,25 +8,43 @@ const navItems = [
   { label: "Dashboard", icon: Home, tab: "dashboard" },
   { label: "Teams", icon: ClipboardList, tab: "teams" },
   { label: "Pit scouting", icon: Radar, tab: "pit" },
+  { label: "Pit crew", icon: ClipboardList, tab: "pitCrew" },
   { label: "Match scouting", icon: CalendarDays, tab: "matches" },
   { label: "Pick list", icon: ListChecks, tab: "picklist" },
   { label: "Tech", icon: Wrench, tab: "tech" },
   { label: "Admin", icon: KeyRound, tab: "admin" },
 ]
 
-type AppTab = "dashboard" | "teams" | "pit" | "matches" | "picklist" | "tech" | "admin"
+type AppTab = "dashboard" | "teams" | "pit" | "pitCrew" | "matches" | "picklist" | "tech" | "admin"
+type UserRole = "admin" | "lead_scout" | "pit" | "tech" | "scout"
+
+function canSeeTab(tab: AppTab, role: UserRole) {
+  if (role === "admin") return true
+  if (tab === "dashboard") return true
+  if (tab === "teams") return role === "lead_scout" || role === "pit" || role === "tech" || role === "scout"
+  if (tab === "pit") return role === "pit" || role === "lead_scout"
+  if (tab === "pitCrew") return role === "pit" || role === "lead_scout"
+  if (tab === "matches") return role === "scout" || role === "lead_scout"
+  if (tab === "picklist") return role === "lead_scout"
+  if (tab === "tech") return role === "tech"
+  return false
+}
 
 export function AppNav({
   activeTab,
   onTabChange,
+  role,
 }: {
   activeTab: string
   onTabChange: (tab: AppTab) => void
+  role: UserRole
 }) {
+  const visibleNavItems = navItems.filter((item) => canSeeTab(item.tab as AppTab, role))
+
   return (
     <>
       <div className="hidden items-center gap-2 md:flex">
-        {navItems.map((item) => (
+        {visibleNavItems.map((item) => (
           <button
             key={item.label}
             type="button"
@@ -48,7 +66,7 @@ export function AppNav({
           </SheetTrigger>
           <SheetContent side="right">
             <div className="flex h-full flex-col gap-3 pt-8">
-              {navItems.map((item) => (
+              {visibleNavItems.map((item) => (
                 <button
                   key={item.label}
                   type="button"

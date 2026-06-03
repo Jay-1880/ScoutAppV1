@@ -92,6 +92,8 @@ export function HomeRoute() {
   const assignUserRole = useMutation(api.scouting.assignUserRole)
   const createTechMessage = useMutation(api.scouting.createTechMessage)
   const resolveTechMessage = useMutation(api.scouting.resolveTechMessage)
+  const createPitCrewItem = useMutation(api.scouting.createPitCrewItem)
+  const markPitCrewItemReturned = useMutation(api.scouting.markPitCrewItemReturned)
   const { signIn, signOut } = useAuthActions()
   const activeTab = useUiStore((state) => state.activeTab)
   const setActiveTab = useUiStore((state) => state.setActiveTab)
@@ -112,6 +114,11 @@ export function HomeRoute() {
   const [pitDrivetrain, setPitDrivetrain] = useState("swerve")
   const [pitTeamId, setPitTeamId] = useState("")
   const [pitMessage, setPitMessage] = useState("")
+  const [borrowerName, setBorrowerName] = useState("")
+  const [borrowerTeam, setBorrowerTeam] = useState("")
+  const [borrowedItem, setBorrowedItem] = useState("")
+  const [borrowNotes, setBorrowNotes] = useState("")
+  const [borrowStatus, setBorrowStatus] = useState("")
   const [pitAnywhere, setPitAnywhere] = useState(false)
   const [pitSpecific, setPitSpecific] = useState(false)
   const [pitMove, setPitMove] = useState(false)
@@ -132,9 +139,9 @@ export function HomeRoute() {
   const [defenseRating, setDefenseRating] = useState(5)
   const [picklistView, setPicklistView] = useState<"primary" | "personal">("personal")
   const [picklistSearch, setPicklistSearch] = useState("")
-  const [techTeamId, setTechTeamId] = useState("")
   const [techMessage, setTechMessage] = useState("")
   const [techStatus, setTechStatus] = useState("")
+  const [roleOverrides, setRoleOverrides] = useState<Record<string, UserRole>>({})
   const [teamDetailOpen, setTeamDetailOpen] = useState(false)
   const bootstrappedProfileForUser = useRef<string | null>(null)
   const routedAfterLoginForUser = useRef<string | null>(null)
@@ -182,12 +189,13 @@ export function HomeRoute() {
   const reports = workspace?.reports ?? []
   const pitReports = workspace?.pitReports ?? []
   const techMessages = workspace?.techMessages ?? []
+  const pitCrewItems = workspace?.pitCrewItems ?? []
   const profiles = workspace?.profiles ?? []
   const openTechMessages = techMessages.filter((message) => message.status === "open")
+  const openPitCrewItems = pitCrewItems.filter((item) => item.status === "borrowed")
   const unscoutedTeams = teams.filter((team) => team.pitStatus !== "scouted" && !pitReports.some((report) => report.teamId === team._id))
   const selectedTeam = teams.find((team) => team._id === teamId) ?? teams[0]
   const selectedPitTeam = unscoutedTeams.find((team) => team._id === pitTeamId) ?? unscoutedTeams[0]
-  const selectedTechTeam = teams.find((team) => team._id === techTeamId)
   const selectedMatch = matches.find((match) => match._id === matchId) ?? matches[0]
   const matchTeams = selectedMatch
     ? teams.filter((team) => [...selectedMatch.redTeamNumbers, ...selectedMatch.blueTeamNumbers].includes(team.teamNumber))
@@ -247,6 +255,21 @@ export function HomeRoute() {
     }
   }, [activeEvent?._id, canManagePicklist, currentUser?.userId, ensurePicklist, isAdmin])
 
+  useEffect(() => {
+    const roleCanSeeActiveTab =
+      isAdmin ||
+      activeTab === "dashboard" ||
+      (activeTab === "teams" && ["lead_scout", "pit", "tech", "scout"].includes(currentRole)) ||
+      (activeTab === "pit" && ["lead_scout", "pit"].includes(currentRole)) ||
+      (activeTab === "pitCrew" && ["lead_scout", "pit"].includes(currentRole)) ||
+      (activeTab === "matches" && ["lead_scout", "scout"].includes(currentRole)) ||
+      (activeTab === "picklist" && currentRole === "lead_scout") ||
+      (activeTab === "tech" && currentRole === "tech")
+    if (!roleCanSeeActiveTab) {
+      setActiveTab("dashboard")
+    }
+  }, [activeTab, currentRole, isAdmin, setActiveTab])
+
   async function handleImport() {
     if (!isAdmin) return
     setLoadingImport(true)
@@ -287,7 +310,17 @@ export function HomeRoute() {
   }
 
   async function handleAssignRole(profileId: string, role: UserRole) {
-    await assignUserRole({ profileId: profileId as never, role })
+    setRoleOverrides((current) => ({ ...current, [profileId]: role }))
+    try {
+      await assignUserRole({ profileId: profileId as never, role })
+    } catch (error) {
+      setRoleOverrides((current) => {
+        const next = { ...current }
+        delete next[profileId]
+        return next
+      })
+      throw error
+    }
   }
 
   async function handleSaveTbaApiKey(event: FormEvent<HTMLFormElement>) {
@@ -369,14 +402,37 @@ export function HomeRoute() {
     try {
       await createTechMessage({
         eventId: activeEvent._id,
-        teamId: selectedTechTeam?._id,
         message: techMessage,
       })
       setTechMessage("")
-      setTechTeamId("")
       setTechStatus("Tech note sent to pit.")
     } catch (error) {
       setTechStatus(error instanceof Error ? error.message : "Could not send tech note.")
+    }
+  }
+
+  async function handlePitCrewSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setBorrowStatus("")
+    if (!activeEvent?._id) {
+      setBorrowStatus("Import an event before tracking borrowed items.")
+      return
+    }
+    try {
+      await createPitCrewItem({
+        eventId: activeEvent._id,
+        borrowerName,
+        borrowerTeam,
+        itemName: borrowedItem,
+        notes: borrowNotes || undefined,
+      })
+      setBorrowerName("")
+      setBorrowerTeam("")
+      setBorrowedItem("")
+      setBorrowNotes("")
+      setBorrowStatus("Borrowed item added.")
+    } catch (error) {
+      setBorrowStatus(error instanceof Error ? error.message : "Could not add borrowed item.")
     }
   }
 
@@ -459,7 +515,11 @@ export function HomeRoute() {
             <p className="text-xs text-muted-foreground">Mobile-first pit, match, and picklist workflow powered by Convex.</p>
           </div>
           <div className="flex items-center gap-2">
-            <AppNav activeTab={activeTab} onTabChange={setActiveTab} />
+            <AppNav activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />
+            <div className="hidden items-center gap-2 rounded-md border bg-background px-2 py-1 sm:flex">
+              <img src={frc1880Logo} alt="Team 1880 logo" className="size-7 rounded-sm object-contain" />
+              <span className="text-sm font-semibold">Team 1880</span>
+            </div>
             <ThemeModeMenu />
             <Button variant="outline" size="sm" onClick={() => void signOut()}>
               Sign out
@@ -481,7 +541,7 @@ export function HomeRoute() {
             {[
               { label: "Teams", value: teams.length },
               { label: "Matches", value: matches.length },
-              { label: "Role", value: isAdmin ? "Admin" : "Scouter" },
+              { label: "Role", value: roleLabels[currentRole] },
             ].map((metric) => (
               <div key={metric.label} className="rounded-xl border bg-card p-4 text-center shadow-sm">
                 <div className="text-2xl font-semibold">{metric.value}</div>
@@ -559,11 +619,11 @@ export function HomeRoute() {
                       <div key={profile._id} className="grid gap-2 rounded-lg border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
                         <div>
                           <div className="text-sm font-semibold">{profile.displayName || "Unnamed scout"}</div>
-                          <div className="text-xs text-muted-foreground">{roleLabels[profile.role as keyof typeof roleLabels] ?? "Scout"}</div>
+                          <div className="text-xs text-muted-foreground">{roleLabels[roleOverrides[profile._id] ?? normalizeRole(profile.role)]}</div>
                         </div>
                         <select
                           className="h-10 rounded-md border bg-card px-3 text-sm"
-                          value={normalizeRole(profile.role)}
+                          value={roleOverrides[profile._id] ?? normalizeRole(profile.role)}
                           disabled={profile.role === "admin"}
                           onChange={(event) => void handleAssignRole(profile._id, event.target.value as UserRole)}
                         >
@@ -698,6 +758,58 @@ export function HomeRoute() {
           </section>
         ) : null}
 
+        {activeTab === "pitCrew" ? (
+          <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+            <form className="rounded-xl border bg-card p-4 shadow-sm" onSubmit={(event) => void handlePitCrewSubmit(event)}>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Users className="size-4" />
+                Pit crew
+              </div>
+              <div className="mt-4 grid gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="borrowerName">Who borrowed it</Label>
+                  <Input id="borrowerName" value={borrowerName} onChange={(event) => setBorrowerName(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="borrowerTeam">Team</Label>
+                  <Input id="borrowerTeam" value={borrowerTeam} onChange={(event) => setBorrowerTeam(event.target.value)} placeholder="Team number or name" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="borrowedItem">Item</Label>
+                  <Input id="borrowedItem" value={borrowedItem} onChange={(event) => setBorrowedItem(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="borrowNotes">Notes</Label>
+                  <Textarea id="borrowNotes" value={borrowNotes} onChange={(event) => setBorrowNotes(event.target.value)} placeholder="Anything pit should remember" />
+                </div>
+                {borrowStatus ? <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">{borrowStatus}</div> : null}
+                <Button type="submit" disabled={!activeEvent || !borrowerName.trim() || !borrowerTeam.trim() || !borrowedItem.trim()}>
+                  Add borrowed item
+                </Button>
+              </div>
+            </form>
+            <div className="rounded-xl border bg-card p-4 shadow-sm">
+              <div className="text-sm font-semibold">Borrowed items</div>
+              <div className="mt-4 grid gap-2">
+                {openPitCrewItems.length ? openPitCrewItems.map((item) => (
+                  <div key={item._id} className="grid gap-3 rounded-lg border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div>
+                      <div className="text-sm font-semibold">{item.itemName}</div>
+                      <div className="text-sm text-muted-foreground">{item.borrowerName} from {item.borrowerTeam}</div>
+                      {item.notes ? <div className="mt-1 text-xs text-muted-foreground">{item.notes}</div> : null}
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => void markPitCrewItemReturned({ itemId: item._id })}>
+                      Returned
+                    </Button>
+                  </div>
+                )) : (
+                  <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">No borrowed items open.</div>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         {activeTab === "matches" ? <section className="rounded-xl border bg-card p-4 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-semibold"><CalendarDays className="size-4" /> Match scouting</div>
           <div className="mt-4 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
@@ -800,21 +912,6 @@ export function HomeRoute() {
             </div>
             <form className="mt-4 grid gap-4" onSubmit={(event) => void handleTechSubmit(event)}>
               <div className="space-y-2">
-                <Label htmlFor="techTeamSelect">Team</Label>
-                <select
-                  id="techTeamSelect"
-                  className="h-12 w-full rounded-md border bg-background px-3 text-sm"
-                  value={techTeamId}
-                  onChange={(event) => setTechTeamId(event.target.value)}
-                  disabled={!canUseTech}
-                >
-                  <option value="">General pit note</option>
-                  {teams.map((team) => (
-                    <option key={team._id} value={team._id}>{team.teamNumber} - {team.nickname}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
                 <Label htmlFor="techMessage">Message for pit</Label>
                 <Textarea
                   id="techMessage"
@@ -851,7 +948,7 @@ export function HomeRoute() {
               <Button size="sm" variant={picklistView === "personal" ? "default" : "outline"} onClick={() => setPicklistView("personal")}>My lists</Button>
             </div>
           </div>
-          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]">
+          <div className="mt-4 grid gap-3">
             <div className="space-y-2">
               <Label htmlFor="picklistSearch">Search teams</Label>
               <Input
@@ -860,12 +957,6 @@ export function HomeRoute() {
                 onChange={(event) => setPicklistSearch(event.target.value)}
                 placeholder="Search by team number or name"
               />
-            </div>
-            <div className="flex items-center gap-3 rounded-xl border bg-background p-3">
-              <img src={frc1880Logo} alt="Team 1880 logo" className="size-12 rounded-md border bg-card object-contain p-1" />
-              <div>
-                <div className="text-sm font-semibold">Team 1880</div>
-              </div>
             </div>
           </div>
           <div className="mt-4 grid min-h-0 flex-1 gap-3 lg:grid-cols-5">

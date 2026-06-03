@@ -81,6 +81,18 @@ export default defineSchema({
     resolvedAt: v.optional(v.number()),
     resolvedBy: v.optional(v.id("users")),
   }).index("eventId", ["eventId"]).index("status", ["status"]),
+  pitCrewItems: defineTable({
+    eventId: v.id("events"),
+    createdBy: v.id("users"),
+    borrowerName: v.string(),
+    borrowerTeam: v.string(),
+    itemName: v.string(),
+    notes: v.optional(v.string()),
+    status: v.union(v.literal("borrowed"), v.literal("returned")),
+    createdAt: v.number(),
+    returnedAt: v.optional(v.number()),
+    returnedBy: v.optional(v.id("users")),
+  }).index("eventId", ["eventId"]).index("status", ["status"]),
   matchReports: defineTable({
     eventId: v.id("events"),
     matchId: v.id("matches"),

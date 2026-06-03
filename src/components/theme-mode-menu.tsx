@@ -1,4 +1,4 @@
-import { Monitor, Moon, Sun } from "lucide-react"
+import { Monitor, Moon, Palette, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { buttonVariants } from "@/components/ui/button"
@@ -29,6 +29,10 @@ export function ThemeModeMenu() {
         <DropdownMenuItem onClick={() => setTheme("dark")}>
           <Moon className="size-4" />
           Dark
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTheme("team1880")}>
+          <Palette className="size-4" />
+          Team 1880
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setTheme("system")}>
           <Monitor className="size-4" />
