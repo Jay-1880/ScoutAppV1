@@ -1,5 +1,5 @@
 import { getAuthUserId } from "@convex-dev/auth/server"
-import { action, mutation, query } from "./_generated/server"
+import { action, mutation, query, type MutationCtx } from "./_generated/server"
 import { internal } from "./_generated/api"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
@@ -79,11 +79,11 @@ async function requireUser(ctx: Parameters<typeof getAuthUserId>[0]) {
   return userId
 }
 
-async function requireAdmin(ctx: Parameters<typeof getAuthUserId>[0] & { db: any }) {
+async function requireAdmin(ctx: MutationCtx) {
   const userId = await requireUser(ctx)
   const profile = await ctx.db
     .query("profiles")
-    .withIndex("userId", (q: any) => q.eq("userId", userId))
+    .withIndex("userId", (q) => q.eq("userId", userId))
     .unique()
   if (profile?.role !== "admin") {
     throw new Error("Admin access required")
@@ -105,7 +105,10 @@ export const currentUser = query({
 
 export const bootstrapProfile = mutation({
   handler: async (ctx, args: { displayName?: string; adminKey?: string }) => {
-    const userId = await requireUser(ctx)
+    const userId = await getAuthUserId(ctx)
+    if (!userId) {
+      return null
+    }
     const role = args.adminKey === ADMIN_KEY ? "admin" : "scouter"
     const existing = await ctx.db
       .query("profiles")
@@ -360,7 +363,10 @@ export const savePitReport = mutation({
     const userId = await requireUser(ctx)
     const team = await ctx.db.get(args.teamId as Id<"teams">)
     if (!team) throw new Error("Team not found")
-    const existing = await ctx.db.query("pitReports").withIndex("teamId", (q) => q.eq("teamId", args.teamId as any)).first()
+    const existing = await ctx.db
+      .query("pitReports")
+      .withIndex("teamId", (q) => q.eq("teamId", args.teamId as Id<"teams">))
+      .first()
     const payload = {
       eventId: team.eventId,
       teamId: args.teamId as Id<"teams">,

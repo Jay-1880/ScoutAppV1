@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useAuthActions } from "@convex-dev/auth/react"
-import { useAction, useMutation, useQuery } from "convex/react"
+import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react"
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Download, KeyRound, LogIn, MapPin, ShieldAlert, Sparkles, Trophy, Users } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
@@ -50,6 +50,7 @@ function getCleanAuthError(error: unknown) {
 export function HomeRoute() {
   const workspace = useQuery(api.scouting.getWorkspace)
   const currentUser = useQuery(api.scouting.currentUser)
+  const { isAuthenticated: convexIsAuthenticated } = useConvexAuth()
   const bootstrapProfile = useMutation(api.scouting.bootstrapProfile)
   const importEvent = useAction(api.scouting.importEvent)
   const upsertImportedEvent = useMutation(api.scouting.upsertImportedEvent)
@@ -98,12 +99,30 @@ export function HomeRoute() {
   const [picklistView, setPicklistView] = useState<"primary" | "personal">("personal")
   const [picklistSearch, setPicklistSearch] = useState("")
   const [teamDetailOpen, setTeamDetailOpen] = useState(false)
+  const bootstrappedProfileForUser = useRef<string | null>(null)
 
   useEffect(() => {
-    if (currentUser?.userId && !currentUser.profile) {
-      void bootstrapProfile({ displayName })
+    if (!convexIsAuthenticated || !currentUser?.userId || currentUser.profile) {
+      return
     }
-  }, [bootstrapProfile, currentUser, displayName])
+    if (bootstrappedProfileForUser.current === currentUser.userId) {
+      return
+    }
+    let cancelled = false
+    void bootstrapProfile({ displayName })
+      .then(() => {
+        if (!cancelled) {
+          bootstrappedProfileForUser.current = currentUser.userId
+        }
+      })
+      .catch(() => {
+        // The auth state can still be settling immediately after sign-in.
+        // Ignore the transient miss and let the next authenticated render retry.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [bootstrapProfile, convexIsAuthenticated, currentUser?.profile, currentUser?.userId, displayName])
 
   const activeEvent = workspace?.event
   const isSignedIn = Boolean(currentUser?.userId)
@@ -163,16 +182,6 @@ export function HomeRoute() {
       return accumulator
     }, {})
   }, [pitReports, reports, teams])
-
-  useEffect(() => {
-    if (!matchId && matches[0]) setMatchId(matches[0]._id)
-  }, [matchId, matches])
-
-  useEffect(() => {
-    if (selectedMatch && (!selectedMatchTeam || !matchTeams.some((team) => team._id === matchTeamId))) {
-      setMatchTeamId(matchTeams[0]?._id ?? "")
-    }
-  }, [matchTeamId, matchTeams, selectedMatch, selectedMatchTeam])
 
   useEffect(() => {
     if (activeEvent?._id && currentUser?.userId) {
