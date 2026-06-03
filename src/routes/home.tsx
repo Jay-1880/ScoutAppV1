@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useAuthActions } from "@convex-dev/auth/react"
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react"
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Download, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trophy, Users, Wrench } from "lucide-react"
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
 import { TeamDetailDialog } from "@/components/team-detail-dialog"
@@ -27,11 +27,12 @@ const columnLabels: Record<PickTier, string> = {
   uncategorized: "Uncategorized",
 }
 
-type UserRole = "admin" | "lead_scout" | "pit" | "tech" | "scout"
+type UserRole = "mentor" | "lead_scout" | "pit" | "tech" | "scout"
 
 const assignableRoles: UserRole[] = ["pit", "tech", "scout", "lead_scout"]
-const roleLabels: Record<UserRole | "scouter", string> = {
-  admin: "Admin",
+const roleLabels: Record<UserRole | "admin" | "scouter", string> = {
+  admin: "Mentor",
+  mentor: "Mentor",
   lead_scout: "Lead Scout",
   pit: "Pit",
   tech: "Tech",
@@ -40,7 +41,8 @@ const roleLabels: Record<UserRole | "scouter", string> = {
 }
 
 function normalizeRole(role: string | undefined): UserRole {
-  if (role === "admin" || role === "lead_scout" || role === "pit" || role === "tech" || role === "scout") {
+  if (role === "admin" || role === "mentor") return "mentor"
+  if (role === "lead_scout" || role === "pit" || role === "tech" || role === "scout") {
     return role
   }
   return "scout"
@@ -90,6 +92,8 @@ export function HomeRoute() {
   const updateTeamPickTier = useMutation(api.scouting.updateTeamPickTier)
   const ensurePicklist = useMutation(api.scouting.ensurePicklist)
   const assignUserRole = useMutation(api.scouting.assignUserRole)
+  const deleteUserProfile = useMutation(api.scouting.deleteUserProfile)
+  const generatePitPhotoUploadUrl = useMutation(api.scouting.generatePitPhotoUploadUrl)
   const createTechMessage = useMutation(api.scouting.createTechMessage)
   const resolveTechMessage = useMutation(api.scouting.resolveTechMessage)
   const createPitCrewItem = useMutation(api.scouting.createPitCrewItem)
@@ -114,6 +118,7 @@ export function HomeRoute() {
   const [pitDrivetrain, setPitDrivetrain] = useState("swerve")
   const [pitTeamId, setPitTeamId] = useState("")
   const [pitMessage, setPitMessage] = useState("")
+  const [pitPhotos, setPitPhotos] = useState<File[]>([])
   const [borrowerName, setBorrowerName] = useState("")
   const [borrowerTeam, setBorrowerTeam] = useState("")
   const [borrowedItem, setBorrowedItem] = useState("")
@@ -142,6 +147,7 @@ export function HomeRoute() {
   const [techMessage, setTechMessage] = useState("")
   const [techStatus, setTechStatus] = useState("")
   const [roleOverrides, setRoleOverrides] = useState<Record<string, UserRole>>({})
+  const [deletedProfileIds, setDeletedProfileIds] = useState<string[]>([])
   const [teamDetailOpen, setTeamDetailOpen] = useState(false)
   const bootstrappedProfileForUser = useRef<string | null>(null)
   const routedAfterLoginForUser = useRef<string | null>(null)
@@ -179,18 +185,18 @@ export function HomeRoute() {
   const activeEvent = workspace?.event
   const isSignedIn = Boolean(currentUser?.userId)
   const currentRole = normalizeRole(currentUser?.profile?.role)
-  const isAdmin = currentRole === "admin"
-  const canManagePicklist = currentRole === "admin" || currentRole === "lead_scout"
-  const canUsePit = currentRole === "admin" || currentRole === "lead_scout" || currentRole === "pit"
-  const canUseTech = currentRole === "admin" || currentRole === "lead_scout" || currentRole === "tech"
-  const adminUnlocked = isAdmin
+  const isMentor = currentRole === "mentor"
+  const canManagePicklist = currentRole === "mentor" || currentRole === "lead_scout"
+  const canUsePit = currentRole === "mentor" || currentRole === "lead_scout" || currentRole === "pit"
+  const canUseTech = currentRole === "mentor" || currentRole === "lead_scout" || currentRole === "tech"
+  const mentorUnlocked = isMentor
   const teams = workspace?.teams ?? []
   const matches = workspace?.matches ?? []
   const reports = workspace?.reports ?? []
   const pitReports = workspace?.pitReports ?? []
   const techMessages = workspace?.techMessages ?? []
   const pitCrewItems = workspace?.pitCrewItems ?? []
-  const profiles = workspace?.profiles ?? []
+  const profiles = (workspace?.profiles ?? []).filter((profile) => !deletedProfileIds.includes(profile._id))
   const openTechMessages = techMessages.filter((message) => message.status === "open")
   const openPitCrewItems = pitCrewItems.filter((item) => item.status === "borrowed")
   const unscoutedTeams = teams.filter((team) => team.pitStatus !== "scouted" && !pitReports.some((report) => report.teamId === team._id))
@@ -249,15 +255,15 @@ export function HomeRoute() {
   useEffect(() => {
     if (activeEvent?._id && currentUser?.userId && canManagePicklist) {
       void ensurePicklist({ eventId: activeEvent._id, name: "My Pick List" })
-      if (isAdmin) {
+      if (isMentor) {
         void ensurePicklist({ eventId: activeEvent._id, name: "Primary Pick List", isPrimary: true })
       }
     }
-  }, [activeEvent?._id, canManagePicklist, currentUser?.userId, ensurePicklist, isAdmin])
+  }, [activeEvent?._id, canManagePicklist, currentUser?.userId, ensurePicklist, isMentor])
 
   useEffect(() => {
     const roleCanSeeActiveTab =
-      isAdmin ||
+      isMentor ||
       activeTab === "dashboard" ||
       (activeTab === "teams" && ["lead_scout", "pit", "tech", "scout"].includes(currentRole)) ||
       (activeTab === "pit" && ["lead_scout", "pit"].includes(currentRole)) ||
@@ -268,10 +274,10 @@ export function HomeRoute() {
     if (!roleCanSeeActiveTab) {
       setActiveTab("dashboard")
     }
-  }, [activeTab, currentRole, isAdmin, setActiveTab])
+  }, [activeTab, currentRole, isMentor, setActiveTab])
 
   async function handleImport() {
-    if (!isAdmin) return
+    if (!isMentor) return
     setLoadingImport(true)
     setImportError("")
     setImportSuccess("")
@@ -303,7 +309,7 @@ export function HomeRoute() {
     event.preventDefault()
     setAdminError("")
     if (adminKeyEntry.trim() !== "1880") {
-      setAdminError("Invalid admin key.")
+      setAdminError("Invalid mentor key.")
       return
     }
     await bootstrapProfile({ displayName: authNickname.trim(), adminKey: adminKeyEntry.trim() })
@@ -320,6 +326,16 @@ export function HomeRoute() {
         return next
       })
       throw error
+    }
+  }
+
+  async function handleDeleteUser(profileId: string) {
+    setDeletedProfileIds((current) => [...current, profileId])
+    try {
+      await deleteUserProfile({ profileId: profileId as never })
+    } catch (error) {
+      setDeletedProfileIds((current) => current.filter((id) => id !== profileId))
+      setAdminError(error instanceof Error ? error.message : "Could not delete user.")
     }
   }
 
@@ -364,6 +380,21 @@ export function HomeRoute() {
     if (!selectedPitTeam) return
     setPitMessage("")
     try {
+      const photoIds = await Promise.all(
+        pitPhotos.map(async (photo) => {
+          const uploadUrl = await generatePitPhotoUploadUrl()
+          const response = await fetch(uploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": photo.type },
+            body: photo,
+          })
+          if (!response.ok) {
+            throw new Error("Could not upload robot photo.")
+          }
+          const { storageId } = await response.json() as { storageId: string }
+          return storageId
+        }),
+      )
       await savePitReport({
         teamId: selectedPitTeam._id,
         scoreAnywhere: pitAnywhere,
@@ -375,6 +406,7 @@ export function HomeRoute() {
         traverse: pitTraverse,
         drivetrain: pitDrivetrain,
         notes: pitNotes || undefined,
+        photoIds: photoIds as never,
       })
       setPitTeamId("")
       setPitAnywhere(false)
@@ -386,6 +418,7 @@ export function HomeRoute() {
       setPitTraverse("trench")
       setPitDrivetrain("swerve")
       setPitNotes("")
+      setPitPhotos([])
       setPitMessage("Pit report submitted. That team is off the unscouted list.")
     } catch (error) {
       setPitMessage(error instanceof Error ? error.message : "Could not save pit report.")
@@ -534,7 +567,7 @@ export function HomeRoute() {
               <div className="mt-2 text-2xl font-semibold">{activeEvent?.name ?? "No event imported yet"}</div>
               <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
                 <MapPin className="size-4" />
-                {[activeEvent?.city, activeEvent?.state, activeEvent?.country].filter(Boolean).join(", ") || "Waiting for admin import"}
+                {[activeEvent?.city, activeEvent?.state, activeEvent?.country].filter(Boolean).join(", ") || "Waiting for mentor import"}
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
@@ -557,22 +590,22 @@ export function HomeRoute() {
             <div className="rounded-xl border bg-card p-4 shadow-sm">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <KeyRound className="size-4" />
-                Admin
+                Mentor
               </div>
-              {!adminUnlocked ? (
+              {!mentorUnlocked ? (
                 <form className="mt-4 space-y-3" onSubmit={(event) => void handleAdminUnlock(event)}>
                   <div className="space-y-2">
-                    <Label htmlFor="adminKeyEntry">Admin key</Label>
+                    <Label htmlFor="adminKeyEntry">Mentor key</Label>
                     <Input id="adminKeyEntry" type="password" value={adminKeyEntry} onChange={(event) => setAdminKeyEntry(event.target.value)} />
                   </div>
                   {adminError ? <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{adminError}</div> : null}
-                  <Button type="submit">Unlock admin</Button>
+                  <Button type="submit">Unlock mentor</Button>
                 </form>
               ) : (
-                <div className="mt-4 rounded-lg border bg-background p-4 text-sm text-muted-foreground">Admin key accepted. Event setup is available.</div>
+                <div className="mt-4 rounded-lg border bg-background p-4 text-sm text-muted-foreground">Mentor key accepted. Event setup is available.</div>
               )}
             </div>
-            {adminUnlocked ? (
+            {mentorUnlocked ? (
               <div className="grid gap-4">
                 <form className="rounded-xl border bg-card p-4 shadow-sm" onSubmit={(event) => void handleSaveTbaApiKey(event)}>
                   <div className="flex items-center gap-2 text-sm font-semibold">
@@ -621,17 +654,29 @@ export function HomeRoute() {
                           <div className="text-sm font-semibold">{profile.displayName || "Unnamed scout"}</div>
                           <div className="text-xs text-muted-foreground">{roleLabels[roleOverrides[profile._id] ?? normalizeRole(profile.role)]}</div>
                         </div>
-                        <select
-                          className="h-10 rounded-md border bg-card px-3 text-sm"
-                          value={roleOverrides[profile._id] ?? normalizeRole(profile.role)}
-                          disabled={profile.role === "admin"}
-                          onChange={(event) => void handleAssignRole(profile._id, event.target.value as UserRole)}
-                        >
-                          {profile.role === "admin" ? <option value="admin">Admin</option> : null}
-                          {assignableRoles.map((role) => (
-                            <option key={role} value={role}>{roleLabels[role]}</option>
-                          ))}
-                        </select>
+                        <div className="flex flex-wrap gap-2 sm:justify-end">
+                          <select
+                            className="h-10 rounded-md border bg-card px-3 text-sm"
+                            value={roleOverrides[profile._id] ?? normalizeRole(profile.role)}
+                            disabled={normalizeRole(profile.role) === "mentor"}
+                            onChange={(event) => void handleAssignRole(profile._id, event.target.value as UserRole)}
+                          >
+                            {normalizeRole(profile.role) === "mentor" ? <option value="mentor">Mentor</option> : null}
+                            {assignableRoles.map((role) => (
+                              <option key={role} value={role}>{roleLabels[role]}</option>
+                            ))}
+                          </select>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={normalizeRole(profile.role) === "mentor"}
+                            onClick={() => void handleDeleteUser(profile._id)}
+                          >
+                            <Trash2 className="size-4" />
+                            Delete
+                          </Button>
+                        </div>
                       </div>
                     )) : (
                       <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">Signed-up users will appear here.</div>
@@ -751,6 +796,22 @@ export function HomeRoute() {
               <div className="space-y-2">
                 <Label htmlFor="pitNotes">Robot notes</Label>
                 <Textarea id="pitNotes" value={pitNotes} onChange={(event) => setPitNotes(event.target.value)} placeholder="Quick notes only" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="robotPhotos">Robot photos</Label>
+                <Input
+                  id="robotPhotos"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(event) => setPitPhotos(Array.from(event.target.files ?? []))}
+                />
+                {pitPhotos.length ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <ImagePlus className="size-4" />
+                    {pitPhotos.length} photo{pitPhotos.length === 1 ? "" : "s"} selected
+                  </div>
+                ) : null}
               </div>
               {pitMessage ? <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">{pitMessage}</div> : null}
               <Button className="w-full" onClick={() => void handlePitSubmit()} disabled={!canUsePit || !selectedPitTeam}>Submit pit scouting</Button>
@@ -939,7 +1000,7 @@ export function HomeRoute() {
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
                 {canManagePicklist
-                  ? picklistView === "primary" ? "Admin primary board and consensus merge target." : "Lead scout and admin board controls."
+                  ? picklistView === "primary" ? "Mentor primary board and consensus merge target." : "Lead scout and mentor board controls."
                   : "View-only for your role."}
               </p>
             </div>

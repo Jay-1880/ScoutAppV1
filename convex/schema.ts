@@ -9,6 +9,7 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     role: v.union(
       v.literal("admin"),
+      v.literal("mentor"),
       v.literal("lead_scout"),
       v.literal("pit"),
       v.literal("tech"),
@@ -70,6 +71,7 @@ export default defineSchema({
     traverse: v.union(v.literal("trench"), v.literal("bump"), v.literal("both"), v.literal("other")),
     drivetrain: v.string(),
     notes: v.optional(v.string()),
+    photoIds: v.optional(v.array(v.id("_storage"))),
   }).index("teamId", ["teamId"]).index("eventId", ["eventId"]),
   techMessages: defineTable({
     eventId: v.id("events"),

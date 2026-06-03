@@ -28,6 +28,7 @@ type TeamDetailDialogProps = {
         traverse: string
         drivetrain: string
         notes?: string
+        photoUrls?: Array<string | null>
       }
       reports: Array<{
         autoBallsScored: number
@@ -92,6 +93,13 @@ export function TeamDetailDialog({ open, onOpenChange, team }: TeamDetailDialogP
                   <div>Traverse: {team.stats.pitReport.traverse}</div>
                   <div>Drivetrain: {team.stats.pitReport.drivetrain}</div>
                   {team.stats.pitReport.notes ? <div className="sm:col-span-2">Notes: {team.stats.pitReport.notes}</div> : null}
+                  {team.stats.pitReport.photoUrls?.filter(Boolean).length ? (
+                    <div className="grid gap-2 sm:col-span-2 sm:grid-cols-2">
+                      {team.stats.pitReport.photoUrls.filter(Boolean).map((url) => (
+                        <img key={url} src={url ?? ""} alt="Robot pit scouting" className="aspect-video w-full rounded-md border object-cover" />
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="mt-2 text-muted-foreground">No pit report yet.</div>

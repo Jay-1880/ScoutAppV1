@@ -8,9 +8,9 @@ const TBA_BASE = "https://www.thebluealliance.com/api/v3"
 const ADMIN_KEY = "1880"
 declare const process: { env: Record<string, string | undefined> }
 
-type AppRole = "admin" | "lead_scout" | "pit" | "tech" | "scout"
+type AppRole = "mentor" | "lead_scout" | "pit" | "tech" | "scout"
 const appRoleValidator = v.union(
-  v.literal("admin"),
+  v.literal("mentor"),
   v.literal("lead_scout"),
   v.literal("pit"),
   v.literal("tech"),
@@ -18,7 +18,8 @@ const appRoleValidator = v.union(
 )
 
 function normalizeRole(role: string | undefined): AppRole {
-  if (role === "admin" || role === "lead_scout" || role === "pit" || role === "tech" || role === "scout") {
+  if (role === "admin" || role === "mentor") return "mentor"
+  if (role === "lead_scout" || role === "pit" || role === "tech" || role === "scout") {
     return role
   }
   return "scout"
@@ -95,14 +96,14 @@ async function requireUser(ctx: Parameters<typeof getAuthUserId>[0]) {
   return userId
 }
 
-async function requireAdmin(ctx: MutationCtx) {
+async function requireMentor(ctx: MutationCtx) {
   const userId = await requireUser(ctx)
   const profile = await ctx.db
     .query("profiles")
     .withIndex("userId", (q) => q.eq("userId", userId))
     .unique()
-  if (profile?.role !== "admin") {
-    throw new Error("Admin access required")
+  if (normalizeRole(profile?.role) !== "mentor") {
+    throw new Error("Mentor access required")
   }
   return userId
 }
@@ -121,7 +122,7 @@ async function requireRole(ctx: MutationCtx, allowedRoles: AppRole[]) {
 }
 
 async function requirePicklistEditor(ctx: MutationCtx) {
-  return requireRole(ctx, ["admin", "lead_scout"])
+  return requireRole(ctx, ["mentor", "lead_scout"])
 }
 
 export const currentUser = query({
@@ -142,14 +143,14 @@ export const bootstrapProfile = mutation({
     if (!userId) {
       return null
     }
-    const role = args.adminKey === ADMIN_KEY ? "admin" : "scout"
+    const role = args.adminKey === ADMIN_KEY ? "mentor" : "scout"
     const existing = await ctx.db
       .query("profiles")
       .withIndex("userId", (q) => q.eq("userId", userId))
       .unique()
     if (existing) {
-      if (existing.role !== "admin" && role === "admin") {
-        await ctx.db.patch(existing._id, { role: "admin", displayName: args.displayName ?? existing.displayName })
+      if (normalizeRole(existing.role) !== "mentor" && role === "mentor") {
+        await ctx.db.patch(existing._id, { role: "mentor", displayName: args.displayName ?? existing.displayName })
         return await ctx.db.get(existing._id)
       }
       return existing
@@ -182,7 +183,12 @@ export const getWorkspace = query({
       ? await ctx.db.query("matchReports").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
       : []
     const pitReports = event
-      ? await ctx.db.query("pitReports").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
+      ? await Promise.all(
+          (await ctx.db.query("pitReports").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()).map(async (report) => ({
+            ...report,
+            photoUrls: await Promise.all((report.photoIds ?? []).map((photoId) => ctx.storage.getUrl(photoId))),
+          })),
+        )
       : []
     const picklists = event
       ? await ctx.db.query("picklists").withIndex("eventIdOwner", (q) => q.eq("eventId", event._id)).collect()
@@ -199,8 +205,8 @@ export const getWorkspace = query({
     const pitCrewItems = event
       ? await ctx.db.query("pitCrewItems").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
       : []
-    const profiles = role === "admin" ? await ctx.db.query("profiles").collect() : []
-    const tbaSetting = role === "admin"
+    const profiles = role === "mentor" ? await ctx.db.query("profiles").collect() : []
+    const tbaSetting = role === "mentor"
       ? await ctx.db.query("appSettings").withIndex("key", (q) => q.eq("key", "tbaApiKey")).unique()
       : null
     return { userId, profile, event, teams, matches, reports, pitReports, picklists, picklistEntries, techMessages, pitCrewItems, profiles, hasTbaApiKey: Boolean(tbaSetting?.value) }
@@ -210,14 +216,34 @@ export const getWorkspace = query({
 export const assignUserRole = mutation({
   args: { profileId: v.id("profiles"), role: appRoleValidator },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx)
+    await requireMentor(ctx)
     await ctx.db.patch(args.profileId, { role: args.role })
+  },
+})
+
+export const deleteUserProfile = mutation({
+  args: { profileId: v.id("profiles") },
+  handler: async (ctx, args) => {
+    const mentorUserId = await requireMentor(ctx)
+    const profile = await ctx.db.get(args.profileId)
+    if (!profile) return
+    if (profile.userId === mentorUserId) {
+      throw new Error("You cannot delete your own mentor account.")
+    }
+    await ctx.db.delete(args.profileId)
+  },
+})
+
+export const generatePitPhotoUploadUrl = mutation({
+  handler: async (ctx) => {
+    await requireRole(ctx, ["mentor", "lead_scout", "pit"])
+    return ctx.storage.generateUploadUrl()
   },
 })
 
 export const saveTbaApiKey = mutation({
   handler: async (ctx, args: { apiKey: string }) => {
-    const userId = await requireAdmin(ctx)
+    const userId = await requireMentor(ctx)
     const apiKey = normalizeTbaApiKey(args.apiKey)
     if (!apiKey) throw new Error("TBA API key is required")
     const existing = await ctx.db.query("appSettings").withIndex("key", (q) => q.eq("key", "tbaApiKey")).unique()
@@ -237,7 +263,7 @@ export const saveTbaApiKey = mutation({
 
 export const saveEvent = mutation({
   handler: async (ctx, args: { eventKey: string; name: string; city?: string; state?: string; country?: string }) => {
-    const userId = await requireAdmin(ctx)
+    const userId = await requireMentor(ctx)
     const existing = await ctx.db
       .query("events")
       .withIndex("eventKey", (q) => q.eq("eventKey", args.eventKey))
@@ -262,7 +288,7 @@ export const importEvent = action({
     const storedApiKey: string | null = await ctx.runQuery(internal.settings.getTbaApiKey)
     const apiKey: string | undefined = storedApiKey ? normalizeTbaApiKey(storedApiKey) : process.env.TBA_API_KEY ? normalizeTbaApiKey(process.env.TBA_API_KEY) : undefined
     if (!apiKey) {
-      return { ok: false, error: "Add your TBA API key in the Admin tab before importing an event." }
+      return { ok: false, error: "Add your TBA API key in the Mentor tab before importing an event." }
     }
     if (!eventKey) {
       return { ok: false, error: "Enter a TBA event key before importing." }
@@ -344,7 +370,7 @@ export const upsertImportedEvent = mutation({
     teams: Array<{ key: string; number: number; nickname: string; city?: string; stateProv?: string; country?: string }>
     matches: Array<{ key: string; number: number; red: number[]; blue: number[]; time?: number }>
   }) => {
-    const userId = await requireAdmin(ctx)
+    const userId = await requireMentor(ctx)
     let event = await ctx.db
       .query("events")
       .withIndex("eventKey", (q) => q.eq("eventKey", args.eventKey))
@@ -408,8 +434,9 @@ export const savePitReport = mutation({
     traverse: "trench" | "bump" | "both" | "other"
     drivetrain: string
     notes?: string
+    photoIds?: Array<Id<"_storage">>
   }) => {
-    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "pit"])
+    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit"])
     const team = await ctx.db.get(args.teamId as Id<"teams">)
     if (!team) throw new Error("Team not found")
     const existing = await ctx.db
@@ -429,6 +456,7 @@ export const savePitReport = mutation({
       traverse: args.traverse,
       drivetrain: args.drivetrain,
       notes: args.notes,
+      photoIds: args.photoIds ?? [],
     }
     if (existing) {
       throw new Error("This team already has a pit report.")
@@ -531,7 +559,7 @@ export const createTechMessage = mutation({
     message: v.string(),
   },
   handler: async (ctx, args) => {
-    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "tech"])
+    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "tech"])
     const message = args.message.trim()
     if (!message) throw new Error("Tech note is required.")
     return ctx.db.insert("techMessages", {
@@ -547,7 +575,7 @@ export const createTechMessage = mutation({
 export const resolveTechMessage = mutation({
   args: { messageId: v.id("techMessages") },
   handler: async (ctx, args) => {
-    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "pit"])
+    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit"])
     await ctx.db.patch(args.messageId, {
       status: "resolved",
       resolvedAt: Date.now(),
@@ -565,7 +593,7 @@ export const createPitCrewItem = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "pit"])
+    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit"])
     const borrowerName = args.borrowerName.trim()
     const borrowerTeam = args.borrowerTeam.trim()
     const itemName = args.itemName.trim()
@@ -589,7 +617,7 @@ export const createPitCrewItem = mutation({
 export const markPitCrewItemReturned = mutation({
   args: { itemId: v.id("pitCrewItems") },
   handler: async (ctx, args) => {
-    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "pit"])
+    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit"])
     await ctx.db.patch(args.itemId, {
       status: "returned",
       returnedAt: Date.now(),

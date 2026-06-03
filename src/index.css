@@ -72,23 +72,23 @@
 }
 
 .team1880 {
-  --background: oklch(0.985 0.012 235);
-  --foreground: oklch(0.2 0.04 245);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.04 245);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.04 245);
-  --primary: oklch(0.46 0.16 255);
-  --primary-foreground: oklch(0.99 0.01 235);
-  --secondary: oklch(0.93 0.035 230);
-  --secondary-foreground: oklch(0.25 0.08 250);
-  --muted: oklch(0.95 0.025 230);
-  --muted-foreground: oklch(0.48 0.055 245);
-  --accent: oklch(0.88 0.07 225);
-  --accent-foreground: oklch(0.22 0.08 250);
+  --background: oklch(0.93 0.055 238);
+  --foreground: oklch(0.18 0.065 252);
+  --card: oklch(0.975 0.025 235);
+  --card-foreground: oklch(0.18 0.065 252);
+  --popover: oklch(0.975 0.025 235);
+  --popover-foreground: oklch(0.18 0.065 252);
+  --primary: oklch(0.42 0.18 255);
+  --primary-foreground: oklch(0.98 0.025 235);
+  --secondary: oklch(0.84 0.075 235);
+  --secondary-foreground: oklch(0.2 0.08 252);
+  --muted: oklch(0.88 0.055 235);
+  --muted-foreground: oklch(0.42 0.075 248);
+  --accent: oklch(0.78 0.105 230);
+  --accent-foreground: oklch(0.18 0.08 252);
   --destructive: oklch(0.58 0.19 25);
-  --border: oklch(0.83 0.045 230);
-  --input: oklch(0.83 0.045 230);
+  --border: oklch(0.72 0.08 235);
+  --input: oklch(0.72 0.08 235);
   --ring: oklch(0.58 0.14 250);
 }
 

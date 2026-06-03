@@ -12,14 +12,14 @@ const navItems = [
   { label: "Match scouting", icon: CalendarDays, tab: "matches" },
   { label: "Pick list", icon: ListChecks, tab: "picklist" },
   { label: "Tech", icon: Wrench, tab: "tech" },
-  { label: "Admin", icon: KeyRound, tab: "admin" },
+  { label: "Mentor", icon: KeyRound, tab: "admin" },
 ]
 
 type AppTab = "dashboard" | "teams" | "pit" | "pitCrew" | "matches" | "picklist" | "tech" | "admin"
-type UserRole = "admin" | "lead_scout" | "pit" | "tech" | "scout"
+type UserRole = "mentor" | "lead_scout" | "pit" | "tech" | "scout"
 
 function canSeeTab(tab: AppTab, role: UserRole) {
-  if (role === "admin") return true
+  if (role === "mentor") return true
   if (tab === "dashboard") return true
   if (tab === "teams") return role === "lead_scout" || role === "pit" || role === "tech" || role === "scout"
   if (tab === "pit") return role === "pit" || role === "lead_scout"
