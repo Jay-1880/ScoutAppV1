@@ -1,7 +1,7 @@
 import { create } from "zustand"
 
 type UiState = {
-  activeTab: "dashboard" | "teams" | "pit" | "matches" | "picklist" | "admin"
+  activeTab: "dashboard" | "teams" | "pit" | "matches" | "picklist" | "tech" | "admin"
   sidebarOpen: boolean
   setActiveTab: (activeTab: UiState["activeTab"]) => void
   setSidebarOpen: (sidebarOpen: boolean) => void

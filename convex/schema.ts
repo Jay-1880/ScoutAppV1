@@ -7,7 +7,14 @@ export default defineSchema({
   profiles: defineTable({
     userId: v.id("users"),
     displayName: v.optional(v.string()),
-    role: v.union(v.literal("admin"), v.literal("scouter")),
+    role: v.union(
+      v.literal("admin"),
+      v.literal("lead_scout"),
+      v.literal("pit"),
+      v.literal("tech"),
+      v.literal("scout"),
+      v.literal("scouter"),
+    ),
   }).index("userId", ["userId"]),
   appSettings: defineTable({
     key: v.string(),
@@ -64,6 +71,16 @@ export default defineSchema({
     drivetrain: v.string(),
     notes: v.optional(v.string()),
   }).index("teamId", ["teamId"]).index("eventId", ["eventId"]),
+  techMessages: defineTable({
+    eventId: v.id("events"),
+    teamId: v.optional(v.id("teams")),
+    createdBy: v.id("users"),
+    message: v.string(),
+    status: v.union(v.literal("open"), v.literal("resolved")),
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+    resolvedBy: v.optional(v.id("users")),
+  }).index("eventId", ["eventId"]).index("status", ["status"]),
   matchReports: defineTable({
     eventId: v.id("events"),
     matchId: v.id("matches"),

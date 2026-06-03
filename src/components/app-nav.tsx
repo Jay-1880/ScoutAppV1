@@ -1,4 +1,4 @@
-import { CalendarDays, ClipboardList, Home, KeyRound, ListChecks, Radar } from "lucide-react"
+import { CalendarDays, ClipboardList, Home, KeyRound, ListChecks, Radar, Wrench } from "lucide-react"
 
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
@@ -10,15 +10,18 @@ const navItems = [
   { label: "Pit scouting", icon: Radar, tab: "pit" },
   { label: "Match scouting", icon: CalendarDays, tab: "matches" },
   { label: "Pick list", icon: ListChecks, tab: "picklist" },
+  { label: "Tech", icon: Wrench, tab: "tech" },
   { label: "Admin", icon: KeyRound, tab: "admin" },
 ]
+
+type AppTab = "dashboard" | "teams" | "pit" | "matches" | "picklist" | "tech" | "admin"
 
 export function AppNav({
   activeTab,
   onTabChange,
 }: {
   activeTab: string
-  onTabChange: (tab: "dashboard" | "teams" | "pit" | "matches" | "picklist" | "admin") => void
+  onTabChange: (tab: AppTab) => void
 }) {
   return (
     <>
@@ -27,7 +30,7 @@ export function AppNav({
           <button
             key={item.label}
             type="button"
-            onClick={() => onTabChange(item.tab as "dashboard" | "teams" | "pit" | "matches" | "picklist" | "admin")}
+            onClick={() => onTabChange(item.tab as AppTab)}
             className={cn(
               "inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
               activeTab === item.tab ? "bg-primary text-primary-foreground" : "hover:bg-accent hover:text-accent-foreground",
@@ -53,7 +56,7 @@ export function AppNav({
                     "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium hover:bg-muted",
                     activeTab === item.tab && "bg-primary text-primary-foreground hover:bg-primary",
                   )}
-                  onClick={() => onTabChange(item.tab as "dashboard" | "teams" | "pit" | "matches" | "picklist" | "admin")}
+                  onClick={() => onTabChange(item.tab as AppTab)}
                 >
                   <item.icon className="size-4" />
                   {item.label}

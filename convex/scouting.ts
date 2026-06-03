@@ -8,6 +8,22 @@ const TBA_BASE = "https://www.thebluealliance.com/api/v3"
 const ADMIN_KEY = "1880"
 declare const process: { env: Record<string, string | undefined> }
 
+type AppRole = "admin" | "lead_scout" | "pit" | "tech" | "scout"
+const appRoleValidator = v.union(
+  v.literal("admin"),
+  v.literal("lead_scout"),
+  v.literal("pit"),
+  v.literal("tech"),
+  v.literal("scout"),
+)
+
+function normalizeRole(role: string | undefined): AppRole {
+  if (role === "admin" || role === "lead_scout" || role === "pit" || role === "tech" || role === "scout") {
+    return role
+  }
+  return "scout"
+}
+
 function normalizeTeamNumber(teamKey: string) {
   return Number(teamKey.replace("frc", ""))
 }
@@ -91,6 +107,23 @@ async function requireAdmin(ctx: MutationCtx) {
   return userId
 }
 
+async function requireRole(ctx: MutationCtx, allowedRoles: AppRole[]) {
+  const userId = await requireUser(ctx)
+  const profile = await ctx.db
+    .query("profiles")
+    .withIndex("userId", (q) => q.eq("userId", userId))
+    .unique()
+  const role = normalizeRole(profile?.role)
+  if (!allowedRoles.includes(role)) {
+    throw new Error("You do not have access to this section.")
+  }
+  return { userId, role }
+}
+
+async function requirePicklistEditor(ctx: MutationCtx) {
+  return requireRole(ctx, ["admin", "lead_scout"])
+}
+
 export const currentUser = query({
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx)
@@ -109,7 +142,7 @@ export const bootstrapProfile = mutation({
     if (!userId) {
       return null
     }
-    const role = args.adminKey === ADMIN_KEY ? "admin" : "scouter"
+    const role = args.adminKey === ADMIN_KEY ? "admin" : "scout"
     const existing = await ctx.db
       .query("profiles")
       .withIndex("userId", (q) => q.eq("userId", userId))
@@ -159,10 +192,23 @@ export const getWorkspace = query({
         ctx.db.query("picklistEntries").withIndex("picklistId", (q) => q.eq("picklistId", picklist._id)).collect(),
       ),
     ).then((entryGroups) => entryGroups.flat())
-    const tbaSetting = profile?.role === "admin"
+    const role = normalizeRole(profile?.role)
+    const techMessages = event
+      ? await ctx.db.query("techMessages").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
+      : []
+    const profiles = role === "admin" ? await ctx.db.query("profiles").collect() : []
+    const tbaSetting = role === "admin"
       ? await ctx.db.query("appSettings").withIndex("key", (q) => q.eq("key", "tbaApiKey")).unique()
       : null
-    return { userId, profile, event, teams, matches, reports, pitReports, picklists, picklistEntries, hasTbaApiKey: Boolean(tbaSetting?.value) }
+    return { userId, profile, event, teams, matches, reports, pitReports, picklists, picklistEntries, techMessages, profiles, hasTbaApiKey: Boolean(tbaSetting?.value) }
+  },
+})
+
+export const assignUserRole = mutation({
+  args: { profileId: v.id("profiles"), role: appRoleValidator },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx)
+    await ctx.db.patch(args.profileId, { role: args.role })
   },
 })
 
@@ -360,7 +406,7 @@ export const savePitReport = mutation({
     drivetrain: string
     notes?: string
   }) => {
-    const userId = await requireUser(ctx)
+    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "pit"])
     const team = await ctx.db.get(args.teamId as Id<"teams">)
     if (!team) throw new Error("Team not found")
     const existing = await ctx.db
@@ -382,9 +428,7 @@ export const savePitReport = mutation({
       notes: args.notes,
     }
     if (existing) {
-      await ctx.db.patch(existing._id, payload)
-      await ctx.db.patch(team._id, { pitStatus: "scouted" })
-      return existing._id
+      throw new Error("This team already has a pit report.")
     }
     const id = await ctx.db.insert("pitReports", payload)
     await ctx.db.patch(team._id, { pitStatus: "scouted" })
@@ -454,14 +498,14 @@ export const updateTeamPickTier = mutation({
     teamId: string
     pickTier: "tier1" | "tier2" | "tier3" | "do_not_pick" | "uncategorized"
   }) => {
-    await requireUser(ctx)
+    await requirePicklistEditor(ctx)
     await ctx.db.patch(args.teamId as Id<"teams">, { pickTier: args.pickTier })
   },
 })
 
 export const ensurePicklist = mutation({
   handler: async (ctx, args: { eventId: string; name: string; isPrimary?: boolean }) => {
-    const userId = args.isPrimary ? await requireAdmin(ctx) : await requireUser(ctx)
+    const { userId } = await requirePicklistEditor(ctx)
     const existing = await ctx.db
       .query("picklists")
       .withIndex("eventIdOwner", (q) => q.eq("eventId", args.eventId as Id<"events">).eq("ownerUserId", userId))
@@ -474,6 +518,39 @@ export const ensurePicklist = mutation({
       name: args.name,
       isPrimary: Boolean(args.isPrimary),
       source: args.isPrimary ? "primary" : "personal",
+    })
+  },
+})
+
+export const createTechMessage = mutation({
+  args: {
+    eventId: v.id("events"),
+    teamId: v.optional(v.id("teams")),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "tech"])
+    const message = args.message.trim()
+    if (!message) throw new Error("Tech note is required.")
+    return ctx.db.insert("techMessages", {
+      eventId: args.eventId,
+      teamId: args.teamId,
+      createdBy: userId,
+      message,
+      status: "open",
+      createdAt: Date.now(),
+    })
+  },
+})
+
+export const resolveTechMessage = mutation({
+  args: { messageId: v.id("techMessages") },
+  handler: async (ctx, args) => {
+    const { userId } = await requireRole(ctx, ["admin", "lead_scout", "pit"])
+    await ctx.db.patch(args.messageId, {
+      status: "resolved",
+      resolvedAt: Date.now(),
+      resolvedBy: userId,
     })
   },
 })

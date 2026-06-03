@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useAuthActions } from "@convex-dev/auth/react"
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react"
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Download, KeyRound, LogIn, MapPin, ShieldAlert, Sparkles, Trophy, Users } from "lucide-react"
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Download, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trophy, Users, Wrench } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
 import { TeamDetailDialog } from "@/components/team-detail-dialog"
@@ -25,6 +25,25 @@ const columnLabels: Record<PickTier, string> = {
   tier3: "Tier 3",
   do_not_pick: "Do Not Pick",
   uncategorized: "Uncategorized",
+}
+
+type UserRole = "admin" | "lead_scout" | "pit" | "tech" | "scout"
+
+const assignableRoles: UserRole[] = ["pit", "tech", "scout", "lead_scout"]
+const roleLabels: Record<UserRole | "scouter", string> = {
+  admin: "Admin",
+  lead_scout: "Lead Scout",
+  pit: "Pit",
+  tech: "Tech",
+  scout: "Scout",
+  scouter: "Scout",
+}
+
+function normalizeRole(role: string | undefined): UserRole {
+  if (role === "admin" || role === "lead_scout" || role === "pit" || role === "tech" || role === "scout") {
+    return role
+  }
+  return "scout"
 }
 
 function average(values: number[]) {
@@ -70,6 +89,9 @@ export function HomeRoute() {
   const saveMatchReport = useMutation(api.scouting.saveMatchReport)
   const updateTeamPickTier = useMutation(api.scouting.updateTeamPickTier)
   const ensurePicklist = useMutation(api.scouting.ensurePicklist)
+  const assignUserRole = useMutation(api.scouting.assignUserRole)
+  const createTechMessage = useMutation(api.scouting.createTechMessage)
+  const resolveTechMessage = useMutation(api.scouting.resolveTechMessage)
   const { signIn, signOut } = useAuthActions()
   const activeTab = useUiStore((state) => state.activeTab)
   const setActiveTab = useUiStore((state) => state.setActiveTab)
@@ -88,6 +110,8 @@ export function HomeRoute() {
   const [importSuccess, setImportSuccess] = useState("")
   const [pitNotes, setPitNotes] = useState("")
   const [pitDrivetrain, setPitDrivetrain] = useState("swerve")
+  const [pitTeamId, setPitTeamId] = useState("")
+  const [pitMessage, setPitMessage] = useState("")
   const [pitAnywhere, setPitAnywhere] = useState(false)
   const [pitSpecific, setPitSpecific] = useState(false)
   const [pitMove, setPitMove] = useState(false)
@@ -108,8 +132,12 @@ export function HomeRoute() {
   const [defenseRating, setDefenseRating] = useState(5)
   const [picklistView, setPicklistView] = useState<"primary" | "personal">("personal")
   const [picklistSearch, setPicklistSearch] = useState("")
+  const [techTeamId, setTechTeamId] = useState("")
+  const [techMessage, setTechMessage] = useState("")
+  const [techStatus, setTechStatus] = useState("")
   const [teamDetailOpen, setTeamDetailOpen] = useState(false)
   const bootstrappedProfileForUser = useRef<string | null>(null)
+  const routedAfterLoginForUser = useRef<string | null>(null)
 
   useEffect(() => {
     if (!convexIsAuthenticated || !currentUser?.userId || currentUser.profile) {
@@ -134,15 +162,32 @@ export function HomeRoute() {
     }
   }, [authNickname, bootstrapProfile, convexIsAuthenticated, currentUser?.profile, currentUser?.userId])
 
+  useEffect(() => {
+    if (currentUser?.userId && routedAfterLoginForUser.current !== currentUser.userId) {
+      routedAfterLoginForUser.current = currentUser.userId
+      setActiveTab("dashboard")
+    }
+  }, [currentUser?.userId, setActiveTab])
+
   const activeEvent = workspace?.event
   const isSignedIn = Boolean(currentUser?.userId)
-  const isAdmin = currentUser?.profile?.role === "admin"
+  const currentRole = normalizeRole(currentUser?.profile?.role)
+  const isAdmin = currentRole === "admin"
+  const canManagePicklist = currentRole === "admin" || currentRole === "lead_scout"
+  const canUsePit = currentRole === "admin" || currentRole === "lead_scout" || currentRole === "pit"
+  const canUseTech = currentRole === "admin" || currentRole === "lead_scout" || currentRole === "tech"
   const adminUnlocked = isAdmin
   const teams = workspace?.teams ?? []
   const matches = workspace?.matches ?? []
   const reports = workspace?.reports ?? []
   const pitReports = workspace?.pitReports ?? []
+  const techMessages = workspace?.techMessages ?? []
+  const profiles = workspace?.profiles ?? []
+  const openTechMessages = techMessages.filter((message) => message.status === "open")
+  const unscoutedTeams = teams.filter((team) => team.pitStatus !== "scouted" && !pitReports.some((report) => report.teamId === team._id))
   const selectedTeam = teams.find((team) => team._id === teamId) ?? teams[0]
+  const selectedPitTeam = unscoutedTeams.find((team) => team._id === pitTeamId) ?? unscoutedTeams[0]
+  const selectedTechTeam = teams.find((team) => team._id === techTeamId)
   const selectedMatch = matches.find((match) => match._id === matchId) ?? matches[0]
   const matchTeams = selectedMatch
     ? teams.filter((team) => [...selectedMatch.redTeamNumbers, ...selectedMatch.blueTeamNumbers].includes(team.teamNumber))
@@ -194,13 +239,13 @@ export function HomeRoute() {
   }, [pitReports, reports, teams])
 
   useEffect(() => {
-    if (activeEvent?._id && currentUser?.userId) {
+    if (activeEvent?._id && currentUser?.userId && canManagePicklist) {
       void ensurePicklist({ eventId: activeEvent._id, name: "My Pick List" })
-      if (currentUser.profile?.role === "admin") {
+      if (isAdmin) {
         void ensurePicklist({ eventId: activeEvent._id, name: "Primary Pick List", isPrimary: true })
       }
     }
-  }, [activeEvent?._id, currentUser, ensurePicklist])
+  }, [activeEvent?._id, canManagePicklist, currentUser?.userId, ensurePicklist, isAdmin])
 
   async function handleImport() {
     if (!isAdmin) return
@@ -241,6 +286,10 @@ export function HomeRoute() {
     await bootstrapProfile({ displayName: authNickname.trim(), adminKey: adminKeyEntry.trim() })
   }
 
+  async function handleAssignRole(profileId: string, role: UserRole) {
+    await assignUserRole({ profileId: profileId as never, role })
+  }
+
   async function handleSaveTbaApiKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setTbaKeyMessage("")
@@ -279,19 +328,56 @@ export function HomeRoute() {
   }
 
   async function handlePitSubmit() {
-    if (!selectedTeam) return
-    await savePitReport({
-      teamId: selectedTeam._id,
-      scoreAnywhere: pitAnywhere,
-      scoreSpecificSpots: pitSpecific,
-      shootOnMove: pitMove,
-      climbLow: pitLow,
-      climbMid: pitMid,
-      climbHigh: pitHigh,
-      traverse: pitTraverse,
-      drivetrain: pitDrivetrain,
-      notes: pitNotes || undefined,
-    })
+    if (!selectedPitTeam) return
+    setPitMessage("")
+    try {
+      await savePitReport({
+        teamId: selectedPitTeam._id,
+        scoreAnywhere: pitAnywhere,
+        scoreSpecificSpots: pitSpecific,
+        shootOnMove: pitMove,
+        climbLow: pitLow,
+        climbMid: pitMid,
+        climbHigh: pitHigh,
+        traverse: pitTraverse,
+        drivetrain: pitDrivetrain,
+        notes: pitNotes || undefined,
+      })
+      setPitTeamId("")
+      setPitAnywhere(false)
+      setPitSpecific(false)
+      setPitMove(false)
+      setPitLow(false)
+      setPitMid(false)
+      setPitHigh(false)
+      setPitTraverse("trench")
+      setPitDrivetrain("swerve")
+      setPitNotes("")
+      setPitMessage("Pit report submitted. That team is off the unscouted list.")
+    } catch (error) {
+      setPitMessage(error instanceof Error ? error.message : "Could not save pit report.")
+    }
+  }
+
+  async function handleTechSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setTechStatus("")
+    if (!activeEvent?._id) {
+      setTechStatus("Import an event before sending tech notes.")
+      return
+    }
+    try {
+      await createTechMessage({
+        eventId: activeEvent._id,
+        teamId: selectedTechTeam?._id,
+        message: techMessage,
+      })
+      setTechMessage("")
+      setTechTeamId("")
+      setTechStatus("Tech note sent to pit.")
+    } catch (error) {
+      setTechStatus(error instanceof Error ? error.message : "Could not send tech note.")
+    }
   }
 
   async function handleMatchSubmit() {
@@ -417,7 +503,7 @@ export function HomeRoute() {
                 <form className="mt-4 space-y-3" onSubmit={(event) => void handleAdminUnlock(event)}>
                   <div className="space-y-2">
                     <Label htmlFor="adminKeyEntry">Admin key</Label>
-                    <Input id="adminKeyEntry" value={adminKeyEntry} onChange={(event) => setAdminKeyEntry(event.target.value)} placeholder="1880" />
+                    <Input id="adminKeyEntry" type="password" value={adminKeyEntry} onChange={(event) => setAdminKeyEntry(event.target.value)} />
                   </div>
                   {adminError ? <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{adminError}</div> : null}
                   <Button type="submit">Unlock admin</Button>
@@ -462,6 +548,35 @@ export function HomeRoute() {
                   {!workspace?.hasTbaApiKey ? <div className="mt-3 rounded-lg border bg-background p-3 text-sm text-muted-foreground">Save a TBA API key first.</div> : null}
                   {importSuccess ? <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">{importSuccess}</div> : null}
                   {importError ? <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{importError}</div> : null}
+                </div>
+                <div className="rounded-xl border bg-card p-4 shadow-sm">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <Users className="size-4" />
+                    Users
+                  </div>
+                  <div className="mt-4 grid gap-2">
+                    {profiles.length ? profiles.map((profile) => (
+                      <div key={profile._id} className="grid gap-2 rounded-lg border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                        <div>
+                          <div className="text-sm font-semibold">{profile.displayName || "Unnamed scout"}</div>
+                          <div className="text-xs text-muted-foreground">{roleLabels[profile.role as keyof typeof roleLabels] ?? "Scout"}</div>
+                        </div>
+                        <select
+                          className="h-10 rounded-md border bg-card px-3 text-sm"
+                          value={normalizeRole(profile.role)}
+                          disabled={profile.role === "admin"}
+                          onChange={(event) => void handleAssignRole(profile._id, event.target.value as UserRole)}
+                        >
+                          {profile.role === "admin" ? <option value="admin">Admin</option> : null}
+                          {assignableRoles.map((role) => (
+                            <option key={role} value={role}>{roleLabels[role]}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )) : (
+                      <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">Signed-up users will appear here.</div>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -511,8 +626,43 @@ export function HomeRoute() {
               <Users className="size-4" />
               Pit scouting
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">Mobile-first cards, checkboxes, and short inputs only.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Pick an unscouted team. Submitted teams leave this list automatically.</p>
             <div className="mt-4 space-y-4">
+              {canUsePit && openTechMessages.length ? (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+                  <div className="text-sm font-semibold">Tech notes for pit</div>
+                  <div className="mt-2 grid gap-2">
+                    {openTechMessages.map((message) => {
+                      const team = teams.find((item) => item._id === message.teamId)
+                      return (
+                        <div key={message._id} className="grid gap-2 rounded-md border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                          <div>
+                            <div className="text-sm font-medium">{team ? `${team.teamNumber} - ${team.nickname}` : "General pit note"}</div>
+                            <div className="text-sm text-muted-foreground">{message.message}</div>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={() => void resolveTechMessage({ messageId: message._id })}>Done</Button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              <div className="space-y-2">
+                <Label htmlFor="pitTeamSelect">Unscouted team</Label>
+                <select
+                  id="pitTeamSelect"
+                  className="h-12 w-full rounded-md border bg-background px-3 text-sm"
+                  value={selectedPitTeam?._id ?? ""}
+                  onChange={(event) => setPitTeamId(event.target.value)}
+                  disabled={!canUsePit || !unscoutedTeams.length}
+                >
+                  {unscoutedTeams.length ? unscoutedTeams.map((team) => (
+                    <option key={team._id} value={team._id}>{team.teamNumber} - {team.nickname}</option>
+                  )) : (
+                    <option value="">No unscouted teams left</option>
+                  )}
+                </select>
+              </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {[
                   ["Can score from anywhere", pitAnywhere, setPitAnywhere],
@@ -542,7 +692,8 @@ export function HomeRoute() {
                 <Label htmlFor="pitNotes">Robot notes</Label>
                 <Textarea id="pitNotes" value={pitNotes} onChange={(event) => setPitNotes(event.target.value)} placeholder="Quick notes only" />
               </div>
-              <Button className="w-full" onClick={() => void handlePitSubmit()} disabled={!selectedTeam}>Submit pit scouting</Button>
+              {pitMessage ? <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">{pitMessage}</div> : null}
+              <Button className="w-full" onClick={() => void handlePitSubmit()} disabled={!canUsePit || !selectedPitTeam}>Submit pit scouting</Button>
             </div>
           </section>
         ) : null}
@@ -641,6 +792,47 @@ export function HomeRoute() {
           </div>
         </section> : null}
 
+        {activeTab === "tech" ? (
+          <section className="rounded-xl border bg-card p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Wrench className="size-4" />
+              Tech
+            </div>
+            <form className="mt-4 grid gap-4" onSubmit={(event) => void handleTechSubmit(event)}>
+              <div className="space-y-2">
+                <Label htmlFor="techTeamSelect">Team</Label>
+                <select
+                  id="techTeamSelect"
+                  className="h-12 w-full rounded-md border bg-background px-3 text-sm"
+                  value={techTeamId}
+                  onChange={(event) => setTechTeamId(event.target.value)}
+                  disabled={!canUseTech}
+                >
+                  <option value="">General pit note</option>
+                  {teams.map((team) => (
+                    <option key={team._id} value={team._id}>{team.teamNumber} - {team.nickname}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="techMessage">Message for pit</Label>
+                <Textarea
+                  id="techMessage"
+                  value={techMessage}
+                  onChange={(event) => setTechMessage(event.target.value)}
+                  placeholder="What should pit prepare for?"
+                  disabled={!canUseTech}
+                />
+              </div>
+              {techStatus ? <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">{techStatus}</div> : null}
+              <Button className="w-full sm:w-fit" type="submit" disabled={!canUseTech || !techMessage.trim() || !activeEvent}>
+                <Send className="size-4" />
+                Send to pit
+              </Button>
+            </form>
+          </section>
+        ) : null}
+
         {activeTab === "picklist" ? <section className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card p-4 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -649,7 +841,9 @@ export function HomeRoute() {
                 Pick list
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {picklistView === "primary" ? "Admin primary board and consensus merge target." : "Personal boards for scouts. Drag teams between tiers or use the quick tier buttons."}
+                {canManagePicklist
+                  ? picklistView === "primary" ? "Admin primary board and consensus merge target." : "Lead scout and admin board controls."
+                  : "View-only for your role."}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -671,7 +865,6 @@ export function HomeRoute() {
               <img src={frc1880Logo} alt="Team 1880 logo" className="size-12 rounded-md border bg-card object-contain p-1" />
               <div>
                 <div className="text-sm font-semibold">Team 1880</div>
-                <div className="text-xs text-muted-foreground">PantherBots scouting powered by clean data.</div>
               </div>
             </div>
           </div>
@@ -683,6 +876,7 @@ export function HomeRoute() {
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => {
                   event.preventDefault()
+                  if (!canManagePicklist) return
                   const droppedTeamId = event.dataTransfer.getData("teamId")
                   if (droppedTeamId) void updateTeamPickTier({ teamId: droppedTeamId, pickTier: column })
                 }}
@@ -695,7 +889,7 @@ export function HomeRoute() {
                   {(groupedTeams[column] ?? []).map((team) => (
                     <div
                       key={team._id}
-                      draggable
+                      draggable={canManagePicklist}
                       onDragStart={(event) => event.dataTransfer.setData("teamId", team._id)}
                       className="rounded-lg border bg-card p-3 text-sm shadow-sm"
                     >
@@ -710,13 +904,13 @@ export function HomeRoute() {
                         <span>Tele {teamStats[team._id]?.avgTeleop.toFixed(1) ?? "0.0"}</span>
                         <span>Climb {teamStats[team._id]?.avgClimb ?? "none"}</span>
                       </div>
-                      <div className="mt-2 grid grid-cols-2 gap-1">
+                      {canManagePicklist ? <div className="mt-2 grid grid-cols-2 gap-1">
                         {columns.filter((target) => target !== column).slice(0, 4).map((target) => (
                           <Button key={target} size="sm" variant="outline" onClick={() => void updateTeamPickTier({ teamId: team._id, pickTier: target })}>
                             {columnLabels[target]}
                           </Button>
                         ))}
-                      </div>
+                      </div> : null}
                     </div>
                   ))}
                 </div>
