@@ -32,17 +32,28 @@ function average(values: number[]) {
   return values.reduce((total, value) => total + value, 0) / values.length
 }
 
-function isValidEmail(email: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+function normalizeNickname(nickname: string) {
+  return nickname
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+}
+
+function nicknameToAuthEmail(nickname: string) {
+  return `${normalizeNickname(nickname)}@scout.local`
 }
 
 function getCleanAuthError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : ""
+  if (message.includes("already exists")) {
+    return "That nickname already exists. Switch to Sign in and use the same password."
+  }
   if (message.includes("invalid password") || message.includes("invalid credentials")) {
-    return "Invalid email or password."
+    return "Invalid nickname or password."
   }
   if (message.includes("email")) {
-    return "Invalid email."
+    return "Invalid nickname."
   }
   return "Could not sign in. Please try again."
 }
@@ -70,9 +81,8 @@ export function HomeRoute() {
   const [tbaApiKey, setTbaApiKey] = useState("")
   const [tbaKeyMessage, setTbaKeyMessage] = useState("")
   const [authMode, setAuthMode] = useState<"signIn" | "signUp">("signIn")
-  const [authEmail, setAuthEmail] = useState("")
+  const [authNickname, setAuthNickname] = useState("")
   const [authPassword, setAuthPassword] = useState("")
-  const [displayName, setDisplayName] = useState("")
   const [authError, setAuthError] = useState("")
   const [importError, setImportError] = useState("")
   const [importSuccess, setImportSuccess] = useState("")
@@ -109,7 +119,7 @@ export function HomeRoute() {
       return
     }
     let cancelled = false
-    void bootstrapProfile({ displayName })
+    void bootstrapProfile({ displayName: authNickname.trim() })
       .then(() => {
         if (!cancelled) {
           bootstrappedProfileForUser.current = currentUser.userId
@@ -122,7 +132,7 @@ export function HomeRoute() {
     return () => {
       cancelled = true
     }
-  }, [bootstrapProfile, convexIsAuthenticated, currentUser?.profile, currentUser?.userId, displayName])
+  }, [authNickname, bootstrapProfile, convexIsAuthenticated, currentUser?.profile, currentUser?.userId])
 
   const activeEvent = workspace?.event
   const isSignedIn = Boolean(currentUser?.userId)
@@ -228,7 +238,7 @@ export function HomeRoute() {
       setAdminError("Invalid admin key.")
       return
     }
-    await bootstrapProfile({ displayName, adminKey: adminKeyEntry.trim() })
+    await bootstrapProfile({ displayName: authNickname.trim(), adminKey: adminKeyEntry.trim() })
   }
 
   async function handleSaveTbaApiKey(event: FormEvent<HTMLFormElement>) {
@@ -246,9 +256,10 @@ export function HomeRoute() {
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setAuthError("")
-    const email = authEmail.trim()
-    if (!isValidEmail(email)) {
-      setAuthError("Invalid email.")
+    const nickname = authNickname.trim()
+    const normalizedNickname = normalizeNickname(nickname)
+    if (normalizedNickname.length < 2) {
+      setAuthError("Nickname must be at least 2 letters or numbers.")
       return
     }
     if (authPassword.length < 8) {
@@ -258,7 +269,8 @@ export function HomeRoute() {
     try {
       await signIn("password", {
         flow: authMode,
-        email,
+        email: nicknameToAuthEmail(nickname),
+        name: nickname,
         password: authPassword,
       })
     } catch (error) {
@@ -330,21 +342,13 @@ export function HomeRoute() {
                 </Button>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="authEmail">Email</Label>
-                <Input id="authEmail" type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} required />
+                <Label htmlFor="authNickname">Nickname</Label>
+                <Input id="authNickname" value={authNickname} onChange={(event) => setAuthNickname(event.target.value)} autoComplete="username" required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="authPassword">Password</Label>
                 <Input id="authPassword" type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required minLength={8} />
               </div>
-              {authMode === "signUp" ? (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="displayName">Display name</Label>
-                    <Input id="displayName" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Scouter name" />
-                  </div>
-                </>
-              ) : null}
               {authError ? <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{authError}</div> : null}
               <Button className="h-11 w-full" type="submit">
                 <LogIn className="size-4" />
