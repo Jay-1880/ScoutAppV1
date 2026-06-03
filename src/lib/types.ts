@@ -1,0 +1,10 @@
+export type MatchEndgameResult = "none" | "low" | "mid" | "high"
+export type PickTier = "tier1" | "tier2" | "tier3" | "do_not_pick" | "uncategorized"
+export type MatchTag =
+  | "fast"
+  | "accurate"
+  | "good_driver"
+  | "plays_defense"
+  | "tippy"
+  | "broke_down"
+  | "inconsistent"
