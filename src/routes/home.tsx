@@ -252,9 +252,6 @@ export function HomeRoute() {
         email,
         password: authPassword,
       })
-      await bootstrapProfile({
-        displayName: displayName || email.split("@")[0],
-      })
     } catch (error) {
       setAuthError(getCleanAuthError(error))
     }

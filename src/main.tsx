@@ -7,9 +7,16 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { router } from '@/router'
 import './index.css'
 
-const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string)
+const root = document.getElementById('root')
+const convexUrl = (import.meta.env.VITE_CONVEX_URL as string | undefined) ?? 'https://zany-cormorant-687.convex.cloud'
 
-createRoot(document.getElementById('root')!).render(
+if (!root) {
+  throw new Error('Root element not found')
+}
+
+const convex = new ConvexReactClient(convexUrl)
+
+createRoot(root).render(
   <StrictMode>
     <ConvexAuthProvider client={convex}>
       <ThemeProvider
