@@ -282,7 +282,7 @@ export const deleteUserProfile = mutation({
 
 export const generatePitPhotoUploadUrl = mutation({
   handler: async (ctx) => {
-    await requireRole(ctx, ["mentor", "lead_scout", "pit"])
+    await requireRole(ctx, ["mentor", "lead_scout", "pit", "scout"])
     return ctx.storage.generateUploadUrl()
   },
 })
@@ -482,7 +482,7 @@ export const savePitReport = mutation({
     notes?: string
     photoIds?: Array<Id<"_storage">>
   }) => {
-    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit"])
+    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit", "scout"])
     const team = await ctx.db.get(args.teamId as Id<"teams">)
     if (!team) throw new Error("Team not found")
     const existing = await ctx.db

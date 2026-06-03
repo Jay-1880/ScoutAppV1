@@ -38,7 +38,7 @@ type StatboticsTeam = {
   }
 }
 
-const assignableRoles: UserRole[] = ["pit", "tech", "scout", "lead_scout", "mentor"]
+const assignableRoles: UserRole[] = ["pit", "tech", "scout", "lead_scout"]
 const roleLabels: Record<UserRole | "admin" | "scouter", string> = {
   admin: "Mentor",
   mentor: "Mentor",
@@ -159,6 +159,7 @@ export function HomeRoute() {
   const [deletedProfileIds, setDeletedProfileIds] = useState<string[]>([])
   const [teamDetailOpen, setTeamDetailOpen] = useState(false)
   const [statboticsEpaByTeamId, setStatboticsEpaByTeamId] = useState<Record<string, number | null>>({})
+  const [selectedActivityUserId, setSelectedActivityUserId] = useState<string | null>(null)
   const bootstrappedProfileForUser = useRef<string | null>(null)
   const routedAfterLoginForUser = useRef<string | null>(null)
 
@@ -210,6 +211,10 @@ export function HomeRoute() {
   const profiles = (workspace?.profiles ?? []).filter((profile) => !deletedProfileIds.includes(profile._id))
   const openTechMessages = techMessages.filter((message) => message.status === "open")
   const openPitCrewItems = pitCrewItems.filter((item) => item.status === "borrowed")
+  const selectedActivityProfile = profiles.find((profile) => profile._id === selectedActivityUserId) ?? null
+  const selectedActivityLogs = selectedActivityProfile
+    ? activityLogs.filter((entry) => entry.targetUserId === selectedActivityProfile.userId || entry.actorUserId === selectedActivityProfile.userId)
+    : []
   const unscoutedTeams = teams.filter((team) => team.pitStatus !== "scouted" && !pitReports.some((report) => report.teamId === team._id))
   const selectedTeam = teams.find((team) => team._id === teamId) ?? teams[0]
   const selectedPitTeam = unscoutedTeams.find((team) => team._id === pitTeamId) ?? unscoutedTeams[0]
@@ -369,6 +374,10 @@ export function HomeRoute() {
       })
       throw error
     }
+  }
+
+  function openUserActivity(profileId: string) {
+    setSelectedActivityUserId(profileId)
   }
 
   async function handleDeleteUser(profileId: string) {
@@ -716,6 +725,9 @@ export function HomeRoute() {
                             <Trash2 className="size-4" />
                             Delete
                           </Button>
+                          <Button type="button" size="sm" variant="outline" onClick={() => openUserActivity(profile._id)}>
+                            Activity
+                          </Button>
                         </div>
                       </div>
                     )) : (
@@ -728,21 +740,22 @@ export function HomeRoute() {
                     <Clock3 className="size-4" />
                     Activity log
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">Recent actions from scouts, pit, tech, and mentor work.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Pick a person to see what they personally contributed.</p>
                   <div className="mt-4 grid gap-2">
-                    {activityLogs.length ? activityLogs.map((entry) => (
-                      <div key={entry._id} className="rounded-lg border bg-background p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-sm font-semibold">{entry.actorName || "Unnamed user"}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {new Date(entry.createdAt).toLocaleString()}
+                    {selectedActivityProfile ? (
+                      selectedActivityLogs.length ? selectedActivityLogs.map((entry) => (
+                        <div key={entry._id} className="rounded-lg border bg-background p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-sm font-semibold">{entry.action}</div>
+                            <div className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</div>
                           </div>
+                          {entry.details ? <div className="mt-1 text-sm text-muted-foreground">{entry.details}</div> : null}
                         </div>
-                        <div className="mt-1 text-sm">{entry.action}</div>
-                        {entry.details ? <div className="mt-1 text-xs text-muted-foreground">{entry.details}</div> : null}
-                      </div>
-                    )) : (
-                      <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">No activity has been logged yet.</div>
+                      )) : (
+                        <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">No activity logged for {selectedActivityProfile.displayName || "this user"} yet.</div>
+                      )
+                    ) : (
+                      <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">Choose a user above to view their activity.</div>
                     )}
                   </div>
                 </div>
@@ -796,25 +809,6 @@ export function HomeRoute() {
             </div>
             <p className="mt-1 text-sm text-muted-foreground">Pick an unscouted team. Submitted teams leave this list automatically.</p>
             <div className="mt-4 space-y-4">
-              {canUsePit && openTechMessages.length ? (
-                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
-                  <div className="text-sm font-semibold">Tech notes for pit</div>
-                  <div className="mt-2 grid gap-2">
-                    {openTechMessages.map((message) => {
-                      const team = teams.find((item) => item._id === message.teamId)
-                      return (
-                        <div key={message._id} className="grid gap-2 rounded-md border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
-                          <div>
-                            <div className="text-sm font-medium">{team ? `${team.teamNumber} - ${team.nickname}` : "General pit note"}</div>
-                            <div className="text-sm text-muted-foreground">{message.message}</div>
-                          </div>
-                          <Button size="sm" variant="outline" onClick={() => void resolveTechMessage({ messageId: message._id })}>Done</Button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              ) : null}
               <div className="space-y-2">
                 <Label htmlFor="pitTeamSelect">Unscouted team</Label>
                 <select
@@ -912,23 +906,45 @@ export function HomeRoute() {
                 </Button>
               </div>
             </form>
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="text-sm font-semibold">Borrowed items</div>
-              <div className="mt-4 grid gap-2">
-                {openPitCrewItems.length ? openPitCrewItems.map((item) => (
-                  <div key={item._id} className="grid gap-3 rounded-lg border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
-                    <div>
-                      <div className="text-sm font-semibold">{item.itemName}</div>
-                      <div className="text-sm text-muted-foreground">{item.borrowerName} from {item.borrowerTeam}</div>
-                      {item.notes ? <div className="mt-1 text-xs text-muted-foreground">{item.notes}</div> : null}
+            <div className="grid gap-4">
+              <div className="rounded-xl border bg-card p-4 shadow-sm">
+                <div className="text-sm font-semibold">Tech notes for pit crew</div>
+                <p className="mt-1 text-sm text-muted-foreground">Messages from Tech show up here for pit crew to prepare before the robot comes back.</p>
+                <div className="mt-4 grid gap-2">
+                  {openTechMessages.length ? openTechMessages.map((message) => {
+                    const team = teams.find((item) => item._id === message.teamId)
+                    return (
+                      <div key={message._id} className="grid gap-2 rounded-md border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                        <div>
+                          <div className="text-sm font-medium">{team ? `${team.teamNumber} - ${team.nickname}` : "General pit note"}</div>
+                          <div className="text-sm text-muted-foreground">{message.message}</div>
+                        </div>
+                        <Button size="sm" variant="outline" onClick={() => void resolveTechMessage({ messageId: message._id })}>Done</Button>
+                      </div>
+                    )
+                  }) : (
+                    <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">No tech notes waiting right now.</div>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-xl border bg-card p-4 shadow-sm">
+                <div className="text-sm font-semibold">Borrowed items</div>
+                <div className="mt-4 grid gap-2">
+                  {openPitCrewItems.length ? openPitCrewItems.map((item) => (
+                    <div key={item._id} className="grid gap-3 rounded-lg border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                      <div>
+                        <div className="text-sm font-semibold">{item.itemName}</div>
+                        <div className="text-sm text-muted-foreground">{item.borrowerName} from {item.borrowerTeam}</div>
+                        {item.notes ? <div className="mt-1 text-xs text-muted-foreground">{item.notes}</div> : null}
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => void markPitCrewItemReturned({ itemId: item._id })}>
+                        Returned
+                      </Button>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => void markPitCrewItemReturned({ itemId: item._id })}>
-                      Returned
-                    </Button>
-                  </div>
-                )) : (
-                  <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">No borrowed items open.</div>
-                )}
+                  )) : (
+                    <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">No borrowed items open.</div>
+                  )}
+                </div>
               </div>
             </div>
           </section>
