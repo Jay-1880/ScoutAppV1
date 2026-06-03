@@ -36,6 +36,24 @@ type StatboticsTeam = {
     mean?: number
     max?: number
   }
+  epa?: number
+  total_epa?: number
+  epa_end?: number
+  epa_pre_playoffs?: number
+  auto_epa?: number
+  teleop_epa?: number
+  endgame_epa?: number
+}
+
+function getStatboticsTotalEpa(data: StatboticsTeam) {
+  if (typeof data.total_epa === "number") return data.total_epa
+  if (typeof data.epa === "number") return data.epa
+  if (typeof data.epa_end === "number") return data.epa_end
+  if (typeof data.epa_pre_playoffs === "number") return data.epa_pre_playoffs
+  if (typeof data.auto_epa === "number" || typeof data.teleop_epa === "number" || typeof data.endgame_epa === "number") {
+    return (data.auto_epa ?? 0) + (data.teleop_epa ?? 0) + (data.endgame_epa ?? 0)
+  }
+  return null
 }
 
 const assignableRoles: UserRole[] = ["pit", "tech", "scout", "lead_scout"]
@@ -275,15 +293,19 @@ export function HomeRoute() {
         setStatboticsEpaByTeamId({})
         return
       }
+      const eventKey = activeEvent?.eventKey
       const entries = await Promise.all(
         teams.map(async (team) => {
           try {
-            const response = await fetch(`https://api.statbotics.io/v3/team/${team.teamNumber}`)
+            const endpoint = eventKey
+              ? `https://api.statbotics.io/v3/team/${team.teamNumber}/event/${eventKey}`
+              : `https://api.statbotics.io/v3/team/${team.teamNumber}`
+            const response = await fetch(endpoint)
             if (!response.ok) {
               return [team._id, null] as const
             }
             const data = (await response.json()) as StatboticsTeam
-            return [team._id, data.norm_epa?.current ?? null] as const
+            return [team._id, getStatboticsTotalEpa(data)] as const
           } catch {
             return [team._id, null] as const
           }
@@ -297,7 +319,7 @@ export function HomeRoute() {
     return () => {
       cancelled = true
     }
-  }, [teams])
+  }, [activeEvent?.eventKey, teams])
 
   useEffect(() => {
     if (activeEvent?._id && currentUser?.userId && canManagePicklist) {

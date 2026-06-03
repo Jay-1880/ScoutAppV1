@@ -80,7 +80,7 @@ export function TeamDetailDialog({ open, onOpenChange, team }: TeamDetailDialogP
               <Metric label="Avg driver" value={team.stats?.avgDriver.toFixed(1) ?? "0.0"} />
             </div>
             <div className="rounded-lg border p-4">
-              <div className="text-xs text-muted-foreground">Current Statbotics EPA</div>
+              <div className="text-xs text-muted-foreground">Total Statbotics EPA</div>
               <div className="text-2xl font-semibold">{team.statboticsEpa != null ? team.statboticsEpa.toFixed(1) : "n/a"}</div>
             </div>
             <div className="rounded-lg border p-4">
