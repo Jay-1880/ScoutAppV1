@@ -1131,7 +1131,8 @@ export function HomeRoute() {
                       <div className="text-muted-foreground">{team.nickname}</div>
                       <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-muted-foreground">
                         <span>{team.pitStatus === "scouted" ? "Pit done" : "Pit open"}</span>
-                        <span>EPA {statboticsEpaByTeamId[team._id] != null ? statboticsEpaByTeamId[team._id]?.toFixed(1) : "n/a"}</span>
+                        <span>Rank {team.eventRank ?? "n/a"}</span>
+                        <span>Current EPA {statboticsEpaByTeamId[team._id] != null ? statboticsEpaByTeamId[team._id]?.toFixed(1) : "n/a"}</span>
                         <span>Drv {teamStats[team._id]?.avgDriver.toFixed(1) ?? "0.0"}</span>
                         <span>Tele {teamStats[team._id]?.avgTeleop.toFixed(1) ?? "0.0"}</span>
                         <span>Climb {teamStats[team._id]?.avgClimb ?? "none"}</span>
@@ -1162,6 +1163,8 @@ export function HomeRoute() {
             country: selectedTeam.country,
             pitStatus: selectedTeam.pitStatus,
             pickTier: selectedTeam.pickTier,
+            eventRank: selectedTeam.eventRank,
+            statboticsEpa: statboticsEpaByTeamId[selectedTeam._id],
             stats: teamStats[selectedTeam._id],
           }}
         />

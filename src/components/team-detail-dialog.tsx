@@ -12,6 +12,8 @@ type TeamDetailDialogProps = {
     country?: string
     pitStatus: string
     pickTier: string
+    eventRank?: number | null
+    statboticsEpa?: number | null
     stats?: {
       matchCount: number
       avgAuto: number
@@ -66,12 +68,20 @@ export function TeamDetailDialog({ open, onOpenChange, team }: TeamDetailDialogP
                 <span className="text-muted-foreground">Pick tier</span>
                 <span>{team.pickTier}</span>
               </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Event rank</span>
+                <span>{team.eventRank ?? "n/a"}</span>
+              </div>
             </div>
             <Separator />
             <div className="grid gap-3 sm:grid-cols-3">
               <Metric label="Avg auto balls" value={team.stats?.avgAuto.toFixed(1) ?? "0.0"} />
               <Metric label="Avg teleop balls" value={team.stats?.avgTeleop.toFixed(1) ?? "0.0"} />
               <Metric label="Avg driver" value={team.stats?.avgDriver.toFixed(1) ?? "0.0"} />
+            </div>
+            <div className="rounded-lg border p-4">
+              <div className="text-xs text-muted-foreground">Current Statbotics EPA</div>
+              <div className="text-2xl font-semibold">{team.statboticsEpa != null ? team.statboticsEpa.toFixed(1) : "n/a"}</div>
             </div>
             <div className="rounded-lg border p-4">
               <div className="font-medium">Pit scouting answers</div>

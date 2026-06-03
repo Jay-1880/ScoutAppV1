@@ -38,6 +38,7 @@ export default defineSchema({
     tbaTeamKey: v.string(),
     teamNumber: v.number(),
     nickname: v.string(),
+    eventRank: v.optional(v.number()),
     city: v.optional(v.string()),
     state: v.optional(v.string()),
     country: v.optional(v.string()),

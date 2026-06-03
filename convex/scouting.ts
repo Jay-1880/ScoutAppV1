@@ -345,9 +345,11 @@ export const importEvent = action({
         fetchTba(`/event/${eventKey}/teams`, apiKey),
         fetchTba(`/event/${eventKey}/matches/simple`, apiKey),
       ])
+      const rankingsResponse = await fetchTba(`/event/${eventKey}/rankings`, apiKey)
       if (!eventResponse.ok) return { ok: false, error: await tbaLookupError("event", eventKey, eventResponse) }
       if (!teamsResponse.ok) return { ok: false, error: await tbaLookupError("teams", eventKey, teamsResponse) }
       if (!matchesResponse.ok) return { ok: false, error: await tbaLookupError("matches", eventKey, matchesResponse) }
+      if (!rankingsResponse.ok) return { ok: false, error: await tbaLookupError("event", eventKey, rankingsResponse) }
       const [event, teams, matches]: [
         ImportedTbaEvent["event"],
         Array<{
@@ -374,6 +376,13 @@ export const importEvent = action({
         teamsResponse.json(),
         matchesResponse.json(),
       ])
+      const rankings = await rankingsResponse.json() as {
+        rankings?: Array<{
+          team_key?: string
+          rank?: number
+        }>
+      }
+      const rankingByTeamKey = new Map((rankings.rankings ?? []).map((entry) => [entry.team_key, entry.rank]))
       return {
         ok: true,
         data: {
@@ -384,6 +393,7 @@ export const importEvent = action({
               key: team.key ?? team.team_key ?? `frc${teamNumber}`,
               number: teamNumber,
               nickname: team.nickname ?? `Team ${teamNumber}`,
+              rank: rankingByTeamKey.get(team.key ?? team.team_key ?? `frc${teamNumber}`),
               city: team.city,
               stateProv: team.state_prov,
               country: team.country,
@@ -413,7 +423,7 @@ export const upsertImportedEvent = mutation({
     city?: string
     state?: string
     country?: string
-    teams: Array<{ key: string; number: number; nickname: string; city?: string; stateProv?: string; country?: string }>
+    teams: Array<{ key: string; number: number; nickname: string; rank?: number; city?: string; stateProv?: string; country?: string }>
     matches: Array<{ key: string; number: number; red: number[]; blue: number[]; time?: number }>
   }) => {
     const userId = await requireMentor(ctx)
@@ -447,6 +457,7 @@ export const upsertImportedEvent = mutation({
         tbaTeamKey: team.key,
         teamNumber: team.number,
         nickname: team.nickname,
+        eventRank: team.rank,
         city: team.city,
         state: team.stateProv,
         country: team.country,
