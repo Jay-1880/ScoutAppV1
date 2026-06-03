@@ -95,6 +95,15 @@ export default defineSchema({
     returnedAt: v.optional(v.number()),
     returnedBy: v.optional(v.id("users")),
   }).index("eventId", ["eventId"]).index("status", ["status"]),
+  activityLogs: defineTable({
+    eventId: v.optional(v.id("events")),
+    actorUserId: v.id("users"),
+    actorName: v.optional(v.string()),
+    action: v.string(),
+    targetUserId: v.optional(v.id("users")),
+    details: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("eventId", ["eventId"]).index("actorUserId", ["actorUserId"]).index("createdAt", ["createdAt"]),
   matchReports: defineTable({
     eventId: v.id("events"),
     matchId: v.id("matches"),

@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is([data-theme="dark"] *));
 
 @theme inline {
   --color-background: var(--background);
@@ -50,7 +50,7 @@
   --ring: oklch(0.58 0.08 190);
 }
 
-.dark {
+[data-theme="dark"] {
   --background: oklch(0.16 0.018 255);
   --foreground: oklch(0.94 0.006 95);
   --card: oklch(0.19 0.018 255);
@@ -71,7 +71,7 @@
   --ring: oklch(0.68 0.08 190);
 }
 
-.team1880 {
+[data-theme="team1880"] {
   --background: oklch(0.93 0.055 238);
   --foreground: oklch(0.18 0.065 252);
   --card: oklch(0.975 0.025 235);

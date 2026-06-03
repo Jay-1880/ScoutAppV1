@@ -96,12 +96,16 @@ async function requireUser(ctx: Parameters<typeof getAuthUserId>[0]) {
   return userId
 }
 
-async function requireMentor(ctx: MutationCtx) {
-  const userId = await requireUser(ctx)
-  const profile = await ctx.db
+async function getUserProfile(ctx: MutationCtx, userId: Id<"users">) {
+  return ctx.db
     .query("profiles")
     .withIndex("userId", (q) => q.eq("userId", userId))
     .unique()
+}
+
+async function requireMentor(ctx: MutationCtx) {
+  const userId = await requireUser(ctx)
+  const profile = await getUserProfile(ctx, userId)
   if (normalizeRole(profile?.role) !== "mentor") {
     throw new Error("Mentor access required")
   }
@@ -110,10 +114,7 @@ async function requireMentor(ctx: MutationCtx) {
 
 async function requireRole(ctx: MutationCtx, allowedRoles: AppRole[]) {
   const userId = await requireUser(ctx)
-  const profile = await ctx.db
-    .query("profiles")
-    .withIndex("userId", (q) => q.eq("userId", userId))
-    .unique()
+  const profile = await getUserProfile(ctx, userId)
   const role = normalizeRole(profile?.role)
   if (!allowedRoles.includes(role)) {
     throw new Error("You do not have access to this section.")
@@ -123,6 +124,28 @@ async function requireRole(ctx: MutationCtx, allowedRoles: AppRole[]) {
 
 async function requirePicklistEditor(ctx: MutationCtx) {
   return requireRole(ctx, ["mentor", "lead_scout"])
+}
+
+async function logActivity(
+  ctx: MutationCtx,
+  args: {
+    actorUserId: Id<"users">
+    action: string
+    eventId?: Id<"events">
+    targetUserId?: Id<"users">
+    details?: string
+  },
+) {
+  const actor = await getUserProfile(ctx, args.actorUserId)
+  return ctx.db.insert("activityLogs", {
+    eventId: args.eventId,
+    actorUserId: args.actorUserId,
+    actorName: actor?.displayName,
+    action: args.action,
+    targetUserId: args.targetUserId,
+    details: args.details,
+    createdAt: Date.now(),
+  })
 }
 
 export const currentUser = query({
@@ -151,15 +174,22 @@ export const bootstrapProfile = mutation({
     if (existing) {
       if (normalizeRole(existing.role) !== "mentor" && role === "mentor") {
         await ctx.db.patch(existing._id, { role: "mentor", displayName: args.displayName ?? existing.displayName })
+        await logActivity(ctx, { actorUserId: userId, action: "Became mentor", details: "Unlocked mentor access." })
         return await ctx.db.get(existing._id)
       }
       return existing
     }
-    return ctx.db.insert("profiles", {
+    const profileId = await ctx.db.insert("profiles", {
       userId,
       displayName: args.displayName,
       role,
     })
+    await logActivity(ctx, {
+      actorUserId: userId,
+      action: role === "mentor" ? "Created mentor profile" : "Signed up",
+      details: args.displayName ? `Display name set to ${args.displayName}.` : undefined,
+    })
+    return profileId
   },
 })
 
@@ -205,18 +235,28 @@ export const getWorkspace = query({
     const pitCrewItems = event
       ? await ctx.db.query("pitCrewItems").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
       : []
+    const activityLogs = event
+      ? await ctx.db.query("activityLogs").withIndex("eventId", (q) => q.eq("eventId", event._id)).order("desc").take(100)
+      : await ctx.db.query("activityLogs").order("desc").take(100)
     const profiles = role === "mentor" ? await ctx.db.query("profiles").collect() : []
     const tbaSetting = role === "mentor"
       ? await ctx.db.query("appSettings").withIndex("key", (q) => q.eq("key", "tbaApiKey")).unique()
       : null
-    return { userId, profile, event, teams, matches, reports, pitReports, picklists, picklistEntries, techMessages, pitCrewItems, profiles, hasTbaApiKey: Boolean(tbaSetting?.value) }
+    return { userId, profile, event, teams, matches, reports, pitReports, picklists, picklistEntries, techMessages, pitCrewItems, activityLogs, profiles, hasTbaApiKey: Boolean(tbaSetting?.value) }
   },
 })
 
 export const assignUserRole = mutation({
   args: { profileId: v.id("profiles"), role: appRoleValidator },
   handler: async (ctx, args) => {
-    await requireMentor(ctx)
+    const actorUserId = await requireMentor(ctx)
+    const profile = await ctx.db.get(args.profileId)
+    await logActivity(ctx, {
+      actorUserId,
+      action: "Changed user role",
+      targetUserId: profile?.userId,
+      details: `Set role to ${args.role}.`,
+    })
     await ctx.db.patch(args.profileId, { role: args.role })
   },
 })
@@ -230,6 +270,12 @@ export const deleteUserProfile = mutation({
     if (profile.userId === mentorUserId) {
       throw new Error("You cannot delete your own mentor account.")
     }
+    await logActivity(ctx, {
+      actorUserId: mentorUserId,
+      action: "Deleted user",
+      targetUserId: profile.userId,
+      details: profile.displayName ? `Removed ${profile.displayName}.` : undefined,
+    })
     await ctx.db.delete(args.profileId)
   },
 })
@@ -463,6 +509,12 @@ export const savePitReport = mutation({
     }
     const id = await ctx.db.insert("pitReports", payload)
     await ctx.db.patch(team._id, { pitStatus: "scouted" })
+    await logActivity(ctx, {
+      actorUserId: userId,
+      eventId: team.eventId,
+      action: "Submitted pit report",
+      details: `Scouted team ${team.teamNumber}.`,
+    })
     return id
   },
 })
@@ -518,9 +570,22 @@ export const saveMatchReport = mutation({
       .first()
     if (existingForTeam?.scoutUserId === userId) {
       await ctx.db.patch(existingForTeam._id, payload)
+      await logActivity(ctx, {
+        actorUserId: userId,
+        eventId: match.eventId,
+        action: "Updated match report",
+        details: `Updated team ${team.teamNumber} in match ${match.matchNumber}.`,
+      })
       return existingForTeam._id
     }
-    return ctx.db.insert("matchReports", payload)
+    const reportId = await ctx.db.insert("matchReports", payload)
+    await logActivity(ctx, {
+      actorUserId: userId,
+      eventId: match.eventId,
+      action: "Submitted match report",
+      details: `Scouted team ${team.teamNumber} in match ${match.matchNumber}.`,
+    })
+    return reportId
   },
 })
 
@@ -562,13 +627,20 @@ export const createTechMessage = mutation({
     const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "tech"])
     const message = args.message.trim()
     if (!message) throw new Error("Tech note is required.")
-    return ctx.db.insert("techMessages", {
+    const id = await ctx.db.insert("techMessages", {
       eventId: args.eventId,
       createdBy: userId,
       message,
       status: "open",
       createdAt: Date.now(),
     })
+    await logActivity(ctx, {
+      actorUserId: userId,
+      eventId: args.eventId,
+      action: "Sent tech note",
+      details: message,
+    })
+    return id
   },
 })
 
@@ -576,11 +648,20 @@ export const resolveTechMessage = mutation({
   args: { messageId: v.id("techMessages") },
   handler: async (ctx, args) => {
     const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit"])
+    const message = await ctx.db.get(args.messageId)
     await ctx.db.patch(args.messageId, {
       status: "resolved",
       resolvedAt: Date.now(),
       resolvedBy: userId,
     })
+    if (message) {
+      await logActivity(ctx, {
+        actorUserId: userId,
+        eventId: message.eventId,
+        action: "Resolved tech note",
+        details: message.message,
+      })
+    }
   },
 })
 
@@ -601,7 +682,7 @@ export const createPitCrewItem = mutation({
     if (!borrowerName || !borrowerTeam || !itemName) {
       throw new Error("Borrower, team, and item are required.")
     }
-    return ctx.db.insert("pitCrewItems", {
+    const id = await ctx.db.insert("pitCrewItems", {
       eventId: args.eventId,
       createdBy: userId,
       borrowerName,
@@ -611,6 +692,13 @@ export const createPitCrewItem = mutation({
       status: "borrowed",
       createdAt: Date.now(),
     })
+    await logActivity(ctx, {
+      actorUserId: userId,
+      eventId: args.eventId,
+      action: "Logged borrowed item",
+      details: `${borrowerName} from ${borrowerTeam} borrowed ${itemName}.`,
+    })
+    return id
   },
 })
 
@@ -618,10 +706,19 @@ export const markPitCrewItemReturned = mutation({
   args: { itemId: v.id("pitCrewItems") },
   handler: async (ctx, args) => {
     const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit"])
+    const item = await ctx.db.get(args.itemId)
     await ctx.db.patch(args.itemId, {
       status: "returned",
       returnedAt: Date.now(),
       returnedBy: userId,
     })
+    if (item) {
+      await logActivity(ctx, {
+        actorUserId: userId,
+        eventId: item.eventId,
+        action: "Marked borrowed item returned",
+        details: `${item.borrowerName} returned ${item.itemName}.`,
+      })
+    }
   },
 })

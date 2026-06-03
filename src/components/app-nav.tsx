@@ -22,7 +22,7 @@ function canSeeTab(tab: AppTab, role: UserRole) {
   if (role === "mentor") return true
   if (tab === "dashboard") return true
   if (tab === "teams") return role === "lead_scout" || role === "pit" || role === "tech" || role === "scout"
-  if (tab === "pit") return role === "pit" || role === "lead_scout"
+  if (tab === "pit") return role === "pit" || role === "lead_scout" || role === "scout"
   if (tab === "pitCrew") return role === "pit" || role === "lead_scout"
   if (tab === "matches") return role === "scout" || role === "lead_scout"
   if (tab === "picklist") return role === "lead_scout"

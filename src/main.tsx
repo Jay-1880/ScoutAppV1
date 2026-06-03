@@ -20,7 +20,7 @@ createRoot(root).render(
   <StrictMode>
     <ConvexAuthProvider client={convex}>
       <ThemeProvider
-        attribute="class"
+        attribute="data-theme"
         defaultTheme="system"
         themes={["light", "dark", "team1880"]}
         enableSystem

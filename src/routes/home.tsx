@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useAuthActions } from "@convex-dev/auth/react"
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react"
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
 import { TeamDetailDialog } from "@/components/team-detail-dialog"
@@ -28,8 +28,17 @@ const columnLabels: Record<PickTier, string> = {
 }
 
 type UserRole = "mentor" | "lead_scout" | "pit" | "tech" | "scout"
+type StatboticsTeam = {
+  team?: number
+  norm_epa?: {
+    current?: number
+    recent?: number
+    mean?: number
+    max?: number
+  }
+}
 
-const assignableRoles: UserRole[] = ["pit", "tech", "scout", "lead_scout"]
+const assignableRoles: UserRole[] = ["pit", "tech", "scout", "lead_scout", "mentor"]
 const roleLabels: Record<UserRole | "admin" | "scouter", string> = {
   admin: "Mentor",
   mentor: "Mentor",
@@ -149,6 +158,7 @@ export function HomeRoute() {
   const [roleOverrides, setRoleOverrides] = useState<Record<string, UserRole>>({})
   const [deletedProfileIds, setDeletedProfileIds] = useState<string[]>([])
   const [teamDetailOpen, setTeamDetailOpen] = useState(false)
+  const [statboticsEpaByTeamId, setStatboticsEpaByTeamId] = useState<Record<string, number | null>>({})
   const bootstrappedProfileForUser = useRef<string | null>(null)
   const routedAfterLoginForUser = useRef<string | null>(null)
 
@@ -187,7 +197,7 @@ export function HomeRoute() {
   const currentRole = normalizeRole(currentUser?.profile?.role)
   const isMentor = currentRole === "mentor"
   const canManagePicklist = currentRole === "mentor" || currentRole === "lead_scout"
-  const canUsePit = currentRole === "mentor" || currentRole === "lead_scout" || currentRole === "pit"
+  const canUsePit = currentRole === "mentor" || currentRole === "lead_scout" || currentRole === "pit" || currentRole === "scout"
   const canUseTech = currentRole === "mentor" || currentRole === "lead_scout" || currentRole === "tech"
   const mentorUnlocked = isMentor
   const teams = workspace?.teams ?? []
@@ -196,6 +206,7 @@ export function HomeRoute() {
   const pitReports = workspace?.pitReports ?? []
   const techMessages = workspace?.techMessages ?? []
   const pitCrewItems = workspace?.pitCrewItems ?? []
+  const activityLogs = workspace?.activityLogs ?? []
   const profiles = (workspace?.profiles ?? []).filter((profile) => !deletedProfileIds.includes(profile._id))
   const openTechMessages = techMessages.filter((message) => message.status === "open")
   const openPitCrewItems = pitCrewItems.filter((item) => item.status === "borrowed")
@@ -253,6 +264,37 @@ export function HomeRoute() {
   }, [pitReports, reports, teams])
 
   useEffect(() => {
+    let cancelled = false
+    async function loadStatbotics() {
+      if (!teams.length) {
+        setStatboticsEpaByTeamId({})
+        return
+      }
+      const entries = await Promise.all(
+        teams.map(async (team) => {
+          try {
+            const response = await fetch(`https://api.statbotics.io/v3/team/${team.teamNumber}`)
+            if (!response.ok) {
+              return [team._id, null] as const
+            }
+            const data = (await response.json()) as StatboticsTeam
+            return [team._id, data.norm_epa?.current ?? null] as const
+          } catch {
+            return [team._id, null] as const
+          }
+        }),
+      )
+      if (!cancelled) {
+        setStatboticsEpaByTeamId(Object.fromEntries(entries))
+      }
+    }
+    void loadStatbotics()
+    return () => {
+      cancelled = true
+    }
+  }, [teams])
+
+  useEffect(() => {
     if (activeEvent?._id && currentUser?.userId && canManagePicklist) {
       void ensurePicklist({ eventId: activeEvent._id, name: "My Pick List" })
       if (isMentor) {
@@ -266,7 +308,7 @@ export function HomeRoute() {
       isMentor ||
       activeTab === "dashboard" ||
       (activeTab === "teams" && ["lead_scout", "pit", "tech", "scout"].includes(currentRole)) ||
-      (activeTab === "pit" && ["lead_scout", "pit"].includes(currentRole)) ||
+      (activeTab === "pit" && ["lead_scout", "pit", "scout"].includes(currentRole)) ||
       (activeTab === "pitCrew" && ["lead_scout", "pit"].includes(currentRole)) ||
       (activeTab === "matches" && ["lead_scout", "scout"].includes(currentRole)) ||
       (activeTab === "picklist" && currentRole === "lead_scout") ||
@@ -657,10 +699,9 @@ export function HomeRoute() {
                           <select
                             className="h-10 rounded-md border bg-card px-3 text-sm"
                             value={roleOverrides[profile._id] ?? normalizeRole(profile.role)}
-                            disabled={normalizeRole(profile.role) === "mentor"}
                             onChange={(event) => void handleAssignRole(profile._id, event.target.value as UserRole)}
                           >
-                            {normalizeRole(profile.role) === "mentor" ? <option value="mentor">Mentor</option> : null}
+                            <option value="mentor">Mentor</option>
                             {assignableRoles.map((role) => (
                               <option key={role} value={role}>{roleLabels[role]}</option>
                             ))}
@@ -679,6 +720,29 @@ export function HomeRoute() {
                       </div>
                     )) : (
                       <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">Signed-up users will appear here.</div>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-card p-4 shadow-sm">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <Clock3 className="size-4" />
+                    Activity log
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">Recent actions from scouts, pit, tech, and mentor work.</p>
+                  <div className="mt-4 grid gap-2">
+                    {activityLogs.length ? activityLogs.map((entry) => (
+                      <div key={entry._id} className="rounded-lg border bg-background p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-semibold">{entry.actorName || "Unnamed user"}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {new Date(entry.createdAt).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="mt-1 text-sm">{entry.action}</div>
+                        {entry.details ? <div className="mt-1 text-xs text-muted-foreground">{entry.details}</div> : null}
+                      </div>
+                    )) : (
+                      <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">No activity has been logged yet.</div>
                     )}
                   </div>
                 </div>
@@ -1051,6 +1115,7 @@ export function HomeRoute() {
                       <div className="text-muted-foreground">{team.nickname}</div>
                       <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-muted-foreground">
                         <span>{team.pitStatus === "scouted" ? "Pit done" : "Pit open"}</span>
+                        <span>EPA {statboticsEpaByTeamId[team._id] != null ? statboticsEpaByTeamId[team._id]?.toFixed(1) : "n/a"}</span>
                         <span>Drv {teamStats[team._id]?.avgDriver.toFixed(1) ?? "0.0"}</span>
                         <span>Tele {teamStats[team._id]?.avgTeleop.toFixed(1) ?? "0.0"}</span>
                         <span>Climb {teamStats[team._id]?.avgClimb ?? "none"}</span>
