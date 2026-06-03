@@ -545,7 +545,6 @@ export function HomeRoute() {
               <Sparkles className="size-4" />
               2026 FRC Scouting
             </div>
-            <p className="text-xs text-muted-foreground">Mobile-first pit, match, and picklist workflow powered by Convex.</p>
           </div>
           <div className="flex items-center gap-2">
             <AppNav activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />

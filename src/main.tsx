@@ -22,6 +22,7 @@ createRoot(root).render(
       <ThemeProvider
         attribute="class"
         defaultTheme="system"
+        themes={["light", "dark", "team1880"]}
         enableSystem
         disableTransitionOnChange
       >
