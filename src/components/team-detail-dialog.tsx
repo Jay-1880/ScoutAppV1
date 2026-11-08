@@ -1,5 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
+import { endgameLabels, tagLabels } from "@/lib/types"
 
 type TeamDetailDialogProps = {
   open: boolean
@@ -21,12 +22,19 @@ type TeamDetailDialogProps = {
       avgDriver: number
       avgClimb: string
       pitReport?: {
-        scoreAnywhere: boolean
-        scoreSpecificSpots: boolean
+        scoreAnywhere?: boolean
+        scoreSpecificSpots?: boolean
         shootOnMove: boolean
-        climbLow: boolean
-        climbMid: boolean
-        climbHigh: boolean
+        climbLow?: boolean
+        climbMid?: boolean
+        climbHigh?: boolean
+        shotRange?: string
+        groundIntake?: boolean
+        humanPlayerIntake?: boolean
+        fuelCapacity?: number
+        autoFuelClaim?: number
+        autoClimb?: boolean
+        maxClimb?: string
         traverse: string
         drivetrain: string
         notes?: string
@@ -38,10 +46,35 @@ type TeamDetailDialogProps = {
         driverRating: number
         defenseRating: number
         endgameResult: string
+        autoClimb?: boolean
+        accuracy?: string
+        fouls?: number
         tags: string[]
       }>
     }
   }
+}
+
+const shotRangeLabels: Record<string, string> = {
+  close: "Right at the hub",
+  mid: "A few set spots",
+  long: "Anywhere in their zone",
+  none: "Doesn't shoot",
+}
+const climbLabels: Record<string, string> = { none: "Can't climb", l1: "Level 1", l2: "Level 2", l3: "Level 3" }
+const traverseLabels: Record<string, string> = { trench: "Under the trench", bump: "Over the bump", both: "Either way", other: "Neither" }
+const accuracyLabels: Record<string, string> = { high: "Most shots in", mid: "About half in", low: "Few shots in" }
+
+function pitClimb(report: { maxClimb?: string; climbLow?: boolean; climbMid?: boolean; climbHigh?: boolean }) {
+  if (report.maxClimb) return climbLabels[report.maxClimb] ?? report.maxClimb
+  if (report.climbHigh) return "Level 3"
+  if (report.climbMid) return "Level 2"
+  if (report.climbLow) return "Level 1"
+  return "Can't climb"
+}
+
+function yesNo(value: boolean | undefined) {
+  return value === undefined ? "—" : value ? "Yes" : "No"
 }
 
 export function TeamDetailDialog({ open, onOpenChange, team }: TeamDetailDialogProps) {
@@ -75,8 +108,8 @@ export function TeamDetailDialog({ open, onOpenChange, team }: TeamDetailDialogP
             </div>
             <Separator />
             <div className="grid gap-3 sm:grid-cols-3">
-              <Metric label="Avg auto balls" value={team.stats?.avgAuto.toFixed(1) ?? "0.0"} />
-              <Metric label="Avg teleop balls" value={team.stats?.avgTeleop.toFixed(1) ?? "0.0"} />
+              <Metric label="Avg auto fuel" value={team.stats?.avgAuto.toFixed(1) ?? "0.0"} />
+              <Metric label="Avg teleop fuel" value={team.stats?.avgTeleop.toFixed(1) ?? "0.0"} />
               <Metric label="Avg driver" value={team.stats?.avgDriver.toFixed(1) ?? "0.0"} />
             </div>
             <div className="rounded-lg border p-4">
@@ -88,20 +121,22 @@ export function TeamDetailDialog({ open, onOpenChange, team }: TeamDetailDialogP
               {team.stats?.pitReport ? (
                 <div className="mt-3 grid gap-2 text-muted-foreground sm:grid-cols-2">
                   {[
-                    ["Score anywhere", team.stats.pitReport.scoreAnywhere],
-                    ["Specific spots", team.stats.pitReport.scoreSpecificSpots],
-                    ["Shoot on move", team.stats.pitReport.shootOnMove],
-                    ["Low climb", team.stats.pitReport.climbLow],
-                    ["Mid climb", team.stats.pitReport.climbMid],
-                    ["High climb", team.stats.pitReport.climbHigh],
+                    ["Scores from", team.stats.pitReport.shotRange ? shotRangeLabels[team.stats.pitReport.shotRange] : "—"],
+                    ["Shoots while driving", yesNo(team.stats.pitReport.shootOnMove)],
+                    ["Holds", team.stats.pitReport.fuelCapacity != null ? `${team.stats.pitReport.fuelCapacity} fuel` : "—"],
+                    ["Auto fuel (their claim)", team.stats.pitReport.autoFuelClaim != null ? String(team.stats.pitReport.autoFuelClaim) : "—"],
+                    ["Floor intake", yesNo(team.stats.pitReport.groundIntake)],
+                    ["Human player intake", yesNo(team.stats.pitReport.humanPlayerIntake)],
+                    ["Highest climb", pitClimb(team.stats.pitReport)],
+                    ["Level 1 in auto", yesNo(team.stats.pitReport.autoClimb)],
+                    ["Crosses field", traverseLabels[team.stats.pitReport.traverse] ?? team.stats.pitReport.traverse],
+                    ["Drivetrain", team.stats.pitReport.drivetrain],
                   ].map(([label, value]) => (
-                    <div key={label as string} className="flex justify-between rounded-md bg-muted/40 px-3 py-2">
-                      <span>{label as string}</span>
-                      <span>{value ? "Yes" : "No"}</span>
+                    <div key={label} className="flex justify-between gap-3 rounded-md bg-muted/40 px-3 py-2">
+                      <span>{label}</span>
+                      <span className="text-right font-medium text-foreground">{value}</span>
                     </div>
                   ))}
-                  <div>Traverse: {team.stats.pitReport.traverse}</div>
-                  <div>Drivetrain: {team.stats.pitReport.drivetrain}</div>
                   {team.stats.pitReport.notes ? <div className="sm:col-span-2">Notes: {team.stats.pitReport.notes}</div> : null}
                   {team.stats.pitReport.photoUrls?.filter(Boolean).length ? (
                     <div className="grid gap-2 sm:col-span-2 sm:grid-cols-2">
@@ -122,12 +157,13 @@ export function TeamDetailDialog({ open, onOpenChange, team }: TeamDetailDialogP
                   team.stats.reports.map((report, index) => (
                     <div key={index} className="rounded-md bg-muted/40 p-3">
                       <div className="grid gap-1 text-muted-foreground sm:grid-cols-2">
-                        <span>Auto balls: {report.autoBallsScored}</span>
-                        <span>Teleop balls: {report.teleopBallsScored}</span>
+                        <span>Auto fuel: {report.autoBallsScored}{report.autoClimb ? " · L1 climb" : ""}</span>
+                        <span>Teleop fuel: {report.teleopBallsScored}{report.accuracy ? ` · ${accuracyLabels[report.accuracy]}` : ""}</span>
                         <span>Driver: {report.driverRating}/10</span>
                         <span>Defense: {report.defenseRating}/10</span>
-                        <span>Endgame: {report.endgameResult}</span>
-                        <span>Tags: {report.tags.map((tag) => tag.replaceAll("_", " ")).join(", ") || "None"}</span>
+                        <span>Endgame: {endgameLabels[report.endgameResult] ?? report.endgameResult}</span>
+                        <span>Fouls: {report.fouls ?? "—"}</span>
+                        <span className="sm:col-span-2">{report.tags.map((tag) => tagLabels[tag] ?? tag.replaceAll("_", " ")).join(" · ") || "No tags"}</span>
                       </div>
                     </div>
                   ))

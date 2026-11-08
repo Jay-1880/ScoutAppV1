@@ -6,12 +6,11 @@ import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download
 import { AppNav } from "@/components/app-nav"
 import { ThemeModeMenu } from "@/components/theme-mode-menu"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-import type { MatchEndgameResult, MatchTag, PickTier } from "@/lib/types"
+import { endgameLabels, tagLabels, type Accuracy, type ClimbLevel, type MatchEndgameResult, type MatchTag, type PickTier, type ShotRange } from "@/lib/types"
 import { useUiStore } from "@/stores/ui-store"
 import frc1880Logo from "@/assets/frc1880.png"
 import { api } from "../../convex/_generated/api"
@@ -55,7 +54,98 @@ async function mapWithLimit<T, R>(items: T[], limit: number, job: (item: T) => P
 }
 import type { Id } from "../../convex/_generated/dataModel"
 
-const tags: MatchTag[] = ["fast", "accurate", "good_driver", "plays_defense", "tippy", "broke_down", "inconsistent"]
+// Grouped so scouts can scan them quickly during a match.
+const tagGroups: Array<{ label: string; tags: MatchTag[] }> = [
+  { label: "Scoring", tags: ["fast_cycles", "shoots_while_moving", "fed_partners", "wasted_inactive_hub"] },
+  { label: "Driving & defense", tags: ["played_defense", "defended_well_against", "used_trench"] },
+  { label: "Problems", tags: ["tipped_over", "disabled", "no_show"] },
+]
+
+// A row of big, tappable choice buttons (easier than dropdowns on a phone).
+function ChoiceGroup<T extends string>({
+  label,
+  hint,
+  value,
+  options,
+  onChange,
+  columns = 2,
+}: {
+  label: string
+  hint?: string
+  value: T
+  options: Array<{ value: T; label: string }>
+  onChange: (value: T) => void
+  columns?: 2 | 3 | 4
+}) {
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-sm font-medium">{label}</legend>
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      <div className={cn("grid gap-2", columns === 2 ? "grid-cols-2" : columns === 3 ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-4")}>
+        {options.map((option) => (
+          <Button
+            key={option.value}
+            type="button"
+            variant={value === option.value ? "default" : "outline"}
+            aria-pressed={value === option.value}
+            className="h-11 whitespace-normal px-2 text-sm leading-tight"
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
+    </fieldset>
+  )
+}
+
+// Big −/+ counter for counting during a match without looking down for long.
+function Counter({
+  label,
+  hint,
+  value,
+  onChange,
+  min = 0,
+  max = 99,
+  suffix = "",
+  compact = false,
+}: {
+  label: string
+  hint?: string
+  value: number
+  onChange: (value: number) => void
+  min?: number
+  max?: number
+  suffix?: string
+  compact?: boolean
+}) {
+  const set = (next: number) => onChange(Math.min(max, Math.max(min, next)))
+  return (
+    <div className={cn("space-y-2", compact && "rounded-lg border p-3")}>
+      <div>
+        <div className={cn("font-medium", compact ? "text-xs" : "text-sm")}>{label}</div>
+        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      </div>
+      <div className={cn("grid items-center gap-2", compact ? "grid-cols-[2.75rem_1fr_2.75rem]" : "grid-cols-[3.5rem_1fr_3.5rem]")}>
+        <Button type="button" variant="outline" className={compact ? "h-11 text-xl" : "h-14 text-2xl"} aria-label={`${label}: minus one`} disabled={value <= min} onClick={() => set(value - 1)}>−</Button>
+        <div className={cn("text-center font-semibold tabular-nums", compact ? "text-lg" : "text-3xl")} aria-live="polite">{value}{suffix}</div>
+        <Button type="button" variant={compact ? "outline" : "default"} className={compact ? "h-11 text-xl" : "h-14 text-2xl"} aria-label={`${label}: plus one`} disabled={value >= max} onClick={() => set(value + 1)}>+</Button>
+      </div>
+    </div>
+  )
+}
+
+function YesNo({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <ChoiceGroup
+      label={label}
+      hint={hint}
+      value={value ? "yes" : "no"}
+      options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]}
+      onChange={(next) => onChange(next === "yes")}
+    />
+  )
+}
 const columns: PickTier[] = ["tier1", "tier2", "tier3", "do_not_pick", "uncategorized"]
 const columnLabels: Record<PickTier, string> = {
   tier1: "Tier 1",
@@ -200,13 +290,21 @@ export function HomeRoute() {
   const [borrowedItem, setBorrowedItem] = useState("")
   const [borrowNotes, setBorrowNotes] = useState("")
   const [borrowStatus, setBorrowStatus] = useState("")
-  const [pitAnywhere, setPitAnywhere] = useState(false)
-  const [pitSpecific, setPitSpecific] = useState(false)
+  const [pitShotRange, setPitShotRange] = useState<ShotRange>("close")
   const [pitMove, setPitMove] = useState(false)
-  const [pitLow, setPitLow] = useState(false)
-  const [pitMid, setPitMid] = useState(false)
-  const [pitHigh, setPitHigh] = useState(false)
-  const [pitTraverse, setPitTraverse] = useState<"trench" | "bump" | "both" | "other">("trench")
+  const [pitGroundIntake, setPitGroundIntake] = useState(true)
+  const [pitHumanIntake, setPitHumanIntake] = useState(false)
+  const [pitCapacity, setPitCapacity] = useState("")
+  const [pitAutoFuel, setPitAutoFuel] = useState("")
+  const [pitAutoClimb, setPitAutoClimb] = useState(false)
+  const [pitMaxClimb, setPitMaxClimb] = useState<ClimbLevel>("none")
+  const [pitTraverse, setPitTraverse] = useState<"trench" | "bump" | "both" | "other">("both")
+  const [teamSearch, setTeamSearch] = useState("")
+  const [teamFilter, setTeamFilter] = useState<"all" | "unscouted" | "scouted">("all")
+  const [teamSort, setTeamSort] = useState<"number" | "rank" | "teleop" | "epa">("number")
+  const [matchAutoClimb, setMatchAutoClimb] = useState(false)
+  const [matchAccuracy, setMatchAccuracy] = useState<Accuracy>("mid")
+  const [matchFouls, setMatchFouls] = useState(0)
   const [matchEndgame, setMatchEndgame] = useState<MatchEndgameResult>("none")
   const [matchTags, setMatchTags] = useState<MatchTag[]>([])
   const [matchId, setMatchId] = useState("")
@@ -310,6 +408,25 @@ export function HomeRoute() {
       uncategorized: [],
     })
   }, [picklistSearch, teams])
+  const visibleTeamList = useMemo(() => {
+    const query = teamSearch.trim().toLowerCase()
+    const filtered = teams.filter((team) => {
+      if (teamFilter === "scouted" && team.pitStatus !== "scouted") return false
+      if (teamFilter === "unscouted" && team.pitStatus === "scouted") return false
+      return !query || `${team.teamNumber} ${team.nickname}`.toLowerCase().includes(query)
+    })
+    const avgTeleop = (id: string) => {
+      const teamReports = reports.filter((report) => report.teamId === id)
+      return teamReports.length ? teamReports.reduce((sum, report) => sum + report.teleopBallsScored, 0) / teamReports.length : -1
+    }
+    return [...filtered].sort((a, b) => {
+      if (teamSort === "rank") return (a.eventRank ?? 9999) - (b.eventRank ?? 9999)
+      if (teamSort === "teleop") return avgTeleop(b._id) - avgTeleop(a._id)
+      if (teamSort === "epa") return (statboticsEpaByTeamId[b._id] ?? -1) - (statboticsEpaByTeamId[a._id] ?? -1)
+      return a.teamNumber - b.teamNumber
+    })
+  }, [teams, reports, teamSearch, teamFilter, teamSort, statboticsEpaByTeamId])
+
   const teamStats = useMemo(() => {
     return teams.reduce<Record<string, {
       matchCount: number
@@ -540,25 +657,29 @@ export function HomeRoute() {
       )
       await savePitReport({
         teamId: selectedPitTeam._id,
-        scoreAnywhere: pitAnywhere,
-        scoreSpecificSpots: pitSpecific,
+        shotRange: pitShotRange,
         shootOnMove: pitMove,
-        climbLow: pitLow,
-        climbMid: pitMid,
-        climbHigh: pitHigh,
+        groundIntake: pitGroundIntake,
+        humanPlayerIntake: pitHumanIntake,
+        fuelCapacity: pitCapacity.trim() ? Math.round(Number(pitCapacity)) : undefined,
+        autoFuelClaim: pitAutoFuel.trim() ? Math.round(Number(pitAutoFuel)) : undefined,
+        autoClimb: pitAutoClimb,
+        maxClimb: pitMaxClimb,
         traverse: pitTraverse,
         drivetrain: pitDrivetrain,
         notes: pitNotes || undefined,
         photoIds: photoIds as never,
       })
       setPitTeamId("")
-      setPitAnywhere(false)
-      setPitSpecific(false)
+      setPitShotRange("close")
       setPitMove(false)
-      setPitLow(false)
-      setPitMid(false)
-      setPitHigh(false)
-      setPitTraverse("trench")
+      setPitGroundIntake(true)
+      setPitHumanIntake(false)
+      setPitCapacity("")
+      setPitAutoFuel("")
+      setPitAutoClimb(false)
+      setPitMaxClimb("none")
+      setPitTraverse("both")
       setPitDrivetrain("swerve")
       setPitNotes("")
       setPitPhotos([])
@@ -623,6 +744,7 @@ export function HomeRoute() {
       matchId?: string; matchTeamId?: string; autoBalls?: number; teleopBalls?: number
       autoNotes?: string; teleopNotes?: string; endgameNotes?: string; driverRating?: number
       defenseRating?: number; matchEndgame?: MatchEndgameResult; matchTags?: MatchTag[]
+      matchAutoClimb?: boolean; matchAccuracy?: Accuracy; matchFouls?: number
     }>(localStorage, MATCH_DRAFT_KEY)
     if (!draft) return
     if (draft.matchId) setMatchId(draft.matchId)
@@ -635,7 +757,11 @@ export function HomeRoute() {
     setDriverRating(draft.driverRating ?? 5)
     setDefenseRating(draft.defenseRating ?? 5)
     setMatchEndgame(draft.matchEndgame ?? "none")
-    setMatchTags(draft.matchTags ?? [])
+    // Drop tags from older versions of the form that no longer exist.
+    setMatchTags((draft.matchTags ?? []).filter((tag) => tag in tagLabels && tagGroups.some((group) => group.tags.includes(tag))))
+    setMatchAutoClimb(draft.matchAutoClimb ?? false)
+    setMatchAccuracy(draft.matchAccuracy ?? "mid")
+    setMatchFouls(draft.matchFouls ?? 0)
   }, [])
 
   useEffect(() => {
@@ -643,8 +769,9 @@ export function HomeRoute() {
     writeJson(localStorage, MATCH_DRAFT_KEY, {
       matchId, matchTeamId, autoBalls, teleopBalls, autoNotes, teleopNotes,
       endgameNotes, driverRating, defenseRating, matchEndgame, matchTags,
+      matchAutoClimb, matchAccuracy, matchFouls,
     })
-  }, [matchId, matchTeamId, autoBalls, teleopBalls, autoNotes, teleopNotes, endgameNotes, driverRating, defenseRating, matchEndgame, matchTags])
+  }, [matchId, matchTeamId, autoBalls, teleopBalls, autoNotes, teleopNotes, endgameNotes, driverRating, defenseRating, matchEndgame, matchTags, matchAutoClimb, matchAccuracy, matchFouls])
 
   async function handleMatchSubmit() {
     if (!selectedMatch || !selectedMatchTeam || matchSubmitting) return
@@ -662,6 +789,9 @@ export function HomeRoute() {
         endgameNotes: endgameNotes || undefined,
         driverRating,
         defenseRating,
+        autoClimb: matchAutoClimb,
+        accuracy: matchAccuracy,
+        fouls: matchFouls,
         tags: matchTags,
       })
       setMatchStatus({ kind: "ok", text: `Saved team ${selectedMatchTeam.teamNumber} in Qual ${selectedMatch.matchNumber}.` })
@@ -673,6 +803,9 @@ export function HomeRoute() {
       setMatchEndgame("none")
       setDriverRating(5)
       setDefenseRating(5)
+      setMatchAutoClimb(false)
+      setMatchAccuracy("mid")
+      setMatchFouls(0)
       setMatchTags([])
       // Jump to the next match so the scout is ready for it.
       const nextMatch = matches
@@ -695,10 +828,6 @@ export function HomeRoute() {
     } finally {
       setMatchSubmitting(false)
     }
-  }
-
-  function step(setter: (value: number) => void, value: number, delta: number, min = 0, max = 99) {
-    setter(Math.min(max, Math.max(min, value + delta)))
   }
 
   if (!isSignedIn) {
@@ -940,41 +1069,93 @@ export function HomeRoute() {
           </section>
         ) : null}
 
-        {activeTab === "teams" ? <section className="grid gap-4">
-          <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <div className="flex items-center justify-between">
+        {activeTab === "teams" ? <section className="grid gap-3">
+          <div className="surface-card grid gap-3 p-3 sm:p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-sm font-semibold">Team list</div>
-                <div className="text-xs text-muted-foreground">Tap a team for the detail modal.</div>
+                <div className="text-sm font-semibold">Teams</div>
+                <div className="text-xs text-muted-foreground">{visibleTeamList.length} of {teams.length} shown · tap a team for details</div>
               </div>
-              <Button variant="outline" size="sm" onClick={() => setTeamDetailOpen(true)} disabled={!selectedTeam}>Open team</Button>
+              <div className="grid grid-cols-3 gap-1 rounded-lg border bg-background p-1 text-xs">
+                {([
+                  ["all", "All"],
+                  ["unscouted", "No pit"],
+                  ["scouted", "Pit done"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setTeamFilter(value)}
+                    className={cn("nav-pill h-8 rounded-md px-3 font-medium", teamFilter === value ? "bg-primary text-primary-foreground" : "hover:bg-muted")}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {teams.map((team) => (
-                <button
-                  key={team._id}
-                  type="button"
-                  className={cn("rounded-xl border p-4 text-left transition", teamId === team._id ? "border-primary bg-primary/5" : "bg-background")}
-                  onClick={() => {
-                    setTeamId(team._id)
-                    setTeamDetailOpen(true)
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="text-lg font-semibold">{team.teamNumber}</div>
-                    {team.pitStatus === "scouted" ? <CheckCircle2 className="size-4 text-emerald-500" /> : <AlertCircle className="size-4 text-muted-foreground" />}
-                  </div>
-                  <div className="text-sm">{team.nickname}</div>
-                  <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
-                    <span>{team.pitStatus === "scouted" ? "Scouted" : "Not Scouted"}</span>
-                    <span>{teamStats[team._id]?.matchCount ?? 0} match reports</span>
-                    <span>{columnLabels[team.pickTier as PickTier]}</span>
-                    <ChevronRight className="size-4 justify-self-end" />
-                  </div>
-                </button>
-              ))}
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <Input
+                value={teamSearch}
+                onChange={(event) => setTeamSearch(event.target.value)}
+                placeholder="Search number or name"
+                inputMode="search"
+                aria-label="Search teams"
+              />
+              <select
+                className="h-8 rounded-lg border bg-background px-2 text-base sm:text-sm"
+                value={teamSort}
+                onChange={(event) => setTeamSort(event.target.value as typeof teamSort)}
+                aria-label="Sort teams"
+              >
+                <option value="number">Sort: team number</option>
+                <option value="rank">Sort: event rank</option>
+                <option value="teleop">Sort: avg teleop fuel</option>
+                <option value="epa">Sort: EPA</option>
+              </select>
             </div>
           </div>
+
+          {visibleTeamList.length ? (
+            <div className="surface-card divide-y overflow-hidden sm:grid sm:grid-cols-2 sm:gap-2 sm:divide-y-0 sm:border-0 sm:bg-transparent sm:shadow-none xl:grid-cols-3">
+              {visibleTeamList.map((team) => {
+                const stats = teamStats[team._id]
+                const epa = statboticsEpaByTeamId[team._id]
+                return (
+                  <button
+                    key={team._id}
+                    type="button"
+                    className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50 active:bg-muted sm:rounded-xl sm:border sm:bg-card sm:p-4 sm:shadow-sm"
+                    onClick={() => {
+                      setTeamId(team._id)
+                      setTeamDetailOpen(true)
+                    }}
+                  >
+                    <div className="w-14 shrink-0 text-lg font-semibold tabular-nums">{team.teamNumber}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{team.nickname}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span className={cn("inline-flex items-center gap-1", team.pitStatus === "scouted" && "text-emerald-600 dark:text-emerald-400")}>
+                          {team.pitStatus === "scouted" ? <CheckCircle2 className="size-3" /> : <AlertCircle className="size-3" />}
+                          {team.pitStatus === "scouted" ? "Pit done" : "No pit"}
+                        </span>
+                        <span>{stats?.matchCount ?? 0} reports</span>
+                        {team.eventRank ? <span>Rank {team.eventRank}</span> : null}
+                        {epa != null ? <span>EPA {epa.toFixed(1)}</span> : null}
+                      </div>
+                    </div>
+                    {team.pickTier !== "uncategorized" ? (
+                      <span className="hidden shrink-0 rounded-full border px-2 py-0.5 text-xs text-muted-foreground min-[380px]:inline">{columnLabels[team.pickTier as PickTier]}</span>
+                    ) : null}
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="surface-card p-6 text-center text-sm text-muted-foreground">
+              {teams.length ? "No teams match that search." : "No teams yet. A mentor needs to import the event."}
+            </div>
+          )}
         </section> : null}
 
         {activeTab === "pit" ? (
@@ -1001,34 +1182,83 @@ export function HomeRoute() {
                   )}
                 </select>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {[
-                  ["Can score from anywhere", pitAnywhere, setPitAnywhere],
-                  ["Can score from specific spots", pitSpecific, setPitSpecific],
-                  ["Can shoot on the move", pitMove, setPitMove],
-                  ["Can climb low", pitLow, setPitLow],
-                  ["Can climb mid", pitMid, setPitMid],
-                  ["Can climb high", pitHigh, setPitHigh],
-                ].map(([label, checked, setter]) => (
-                  <label key={label as string} className="flex items-center gap-3 rounded-lg border p-3">
-                    <Checkbox checked={checked as boolean} onCheckedChange={(value) => (setter as (checked: boolean) => void)(Boolean(value))} />
-                    <span className="text-sm">{label as string}</span>
-                  </label>
-                ))}
+              <div className="grid gap-5 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Shooting</div>
+                <ChoiceGroup
+                  label="Where can it score fuel from?"
+                  hint="Ask them, then pick the farthest spot they're consistent from."
+                  value={pitShotRange}
+                  columns={4}
+                  options={[
+                    { value: "close", label: "Right at the hub" },
+                    { value: "mid", label: "A few set spots" },
+                    { value: "long", label: "Anywhere in our zone" },
+                    { value: "none", label: "Doesn't shoot" },
+                  ]}
+                  onChange={setPitShotRange}
+                />
+                <YesNo label="Can it shoot while driving?" value={pitMove} onChange={setPitMove} />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="pitCapacity">How much fuel can it hold?</Label>
+                    <Input id="pitCapacity" inputMode="numeric" pattern="[0-9]*" value={pitCapacity} onChange={(event) => setPitCapacity(event.target.value.replace(/\D/g, ""))} placeholder="e.g. 8" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pitAutoFuel">Fuel they say they score in auto</Label>
+                    <Input id="pitAutoFuel" inputMode="numeric" pattern="[0-9]*" value={pitAutoFuel} onChange={(event) => setPitAutoFuel(event.target.value.replace(/\D/g, ""))} placeholder="e.g. 6" />
+                  </div>
+                </div>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Button variant={pitTraverse === "trench" ? "default" : "outline"} onClick={() => setPitTraverse("trench")}>Trench</Button>
-                <Button variant={pitTraverse === "bump" ? "default" : "outline"} onClick={() => setPitTraverse("bump")}>Bump</Button>
-                <Button variant={pitTraverse === "both" ? "default" : "outline"} onClick={() => setPitTraverse("both")}>Both</Button>
-                <Button variant={pitTraverse === "other" ? "default" : "outline"} onClick={() => setPitTraverse("other")}>Other</Button>
+
+              <div className="grid gap-5 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Intake</div>
+                <YesNo label="Picks fuel up off the floor?" value={pitGroundIntake} onChange={setPitGroundIntake} />
+                <YesNo label="Takes fuel from the human player?" value={pitHumanIntake} onChange={setPitHumanIntake} />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="drivetrain">Drivetrain</Label>
-                <Input id="drivetrain" value={pitDrivetrain} onChange={(event) => setPitDrivetrain(event.target.value)} />
+
+              <div className="grid gap-5 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Climbing & driving</div>
+                <ChoiceGroup
+                  label="Highest tower level it can reach"
+                  value={pitMaxClimb}
+                  columns={4}
+                  options={[
+                    { value: "none", label: "Can't climb" },
+                    { value: "l1", label: "Level 1" },
+                    { value: "l2", label: "Level 2" },
+                    { value: "l3", label: "Level 3" },
+                  ]}
+                  onChange={setPitMaxClimb}
+                />
+                <YesNo label="Can it climb Level 1 during auto?" hint="Worth 15 points in auto." value={pitAutoClimb} onChange={setPitAutoClimb} />
+                <ChoiceGroup
+                  label="How does it cross the field?"
+                  value={pitTraverse}
+                  columns={4}
+                  options={[
+                    { value: "trench", label: "Under the trench" },
+                    { value: "bump", label: "Over the bump" },
+                    { value: "both", label: "Either way" },
+                    { value: "other", label: "Neither" },
+                  ]}
+                  onChange={setPitTraverse}
+                />
+                <ChoiceGroup
+                  label="Drivetrain"
+                  value={["swerve", "tank", "mecanum"].includes(pitDrivetrain) ? pitDrivetrain : "other"}
+                  columns={4}
+                  options={[
+                    { value: "swerve", label: "Swerve" },
+                    { value: "tank", label: "Tank" },
+                    { value: "mecanum", label: "Mecanum" },
+                    { value: "other", label: "Other" },
+                  ]}
+                  onChange={setPitDrivetrain}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="pitNotes">Robot notes</Label>
-                <Textarea id="pitNotes" value={pitNotes} onChange={(event) => setPitNotes(event.target.value)} placeholder="Quick notes only" />
+                <Textarea id="pitNotes" value={pitNotes} onChange={(event) => setPitNotes(event.target.value)} placeholder="Anything that stood out: strong auto, fragile intake, still being fixed, great people to partner with…" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="robotPhotos">Robot photos</Label>
@@ -1158,60 +1388,82 @@ export function HomeRoute() {
               </div>
               <div className="rounded-lg border p-4 text-sm text-muted-foreground">Each scout can claim one robot per match. The team picker narrows to the six imported teams.</div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {[
-                ["Auto balls", autoBalls, setAutoBalls],
-                ["Teleop balls", teleopBalls, setTeleopBalls],
-              ].map(([label, value, setter]) => (
-                <div key={label as string} className="rounded-lg border p-4">
-                  <div className="text-sm font-medium">{label as string}</div>
-                  <div className="mt-3 grid grid-cols-[3.5rem_1fr_3.5rem] items-center gap-2">
-                    <Button variant="outline" className="h-14 text-2xl" aria-label={`${label as string} minus one`} onClick={() => step(setter as (value: number) => void, value as number, -1)}>−</Button>
-                    <div className="text-center text-3xl font-semibold tabular-nums">{value as number}</div>
-                    <Button className="h-14 text-2xl" aria-label={`${label as string} plus one`} onClick={() => step(setter as (value: number) => void, value as number, 1)}>+</Button>
-                  </div>
+            <div className="grid gap-3">
+              <div className="grid gap-4 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Auto <span className="font-normal text-muted-foreground">(first 20 seconds)</span></div>
+                <Counter label="Fuel scored in the hub" value={autoBalls} onChange={setAutoBalls} max={200} />
+                <YesNo label="Climbed Level 1 in auto?" value={matchAutoClimb} onChange={setMatchAutoClimb} />
+              </div>
+
+              <div className="grid gap-4 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Teleop</div>
+                <Counter label="Fuel scored while their hub was active" hint="Shots into an inactive hub score 0, so don't count them." value={teleopBalls} onChange={setTeleopBalls} max={500} />
+                <ChoiceGroup
+                  label="How many of their shots went in?"
+                  value={matchAccuracy}
+                  columns={3}
+                  options={[
+                    { value: "high", label: "Most" },
+                    { value: "mid", label: "About half" },
+                    { value: "low", label: "Few" },
+                  ]}
+                  onChange={setMatchAccuracy}
+                />
+              </div>
+
+              <div className="grid gap-4 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Endgame <span className="font-normal text-muted-foreground">(last 30 seconds)</span></div>
+                <ChoiceGroup
+                  label="Tower level they finished on"
+                  value={matchEndgame}
+                  columns={4}
+                  options={(["none", "low", "mid", "high"] as MatchEndgameResult[]).map((result) => ({ value: result, label: endgameLabels[result] }))}
+                  onChange={setMatchEndgame}
+                />
+              </div>
+
+              <div className="grid gap-4 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Driving</div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Counter label="Driver skill" hint="1 = struggled, 10 = elite" value={driverRating} onChange={setDriverRating} min={1} max={10} suffix="/10" compact />
+                  <Counter label="Defense played" hint="1 = none, 10 = shut someone down" value={defenseRating} onChange={setDefenseRating} min={1} max={10} suffix="/10" compact />
+                  <Counter label="Fouls they caused" value={matchFouls} onChange={setMatchFouls} max={30} compact />
                 </div>
-              ))}
-              <div className="rounded-lg border p-4 sm:col-span-2">
-                <div className="text-sm font-medium">Driver and defense ratings</div>
-                <div className="mt-3 grid grid-cols-2 gap-3">
-                  <div className="rounded-lg border p-3">
-                    <div className="text-xs text-muted-foreground">Driver</div>
-                    <div className="mt-2 grid grid-cols-[2.75rem_1fr_2.75rem] items-center gap-1">
-                      <Button variant="outline" className="h-11 text-xl" aria-label="Driver rating down" onClick={() => step(setDriverRating, driverRating, -1, 1, 10)}>−</Button>
-                      <div className="text-center text-lg font-semibold tabular-nums">{driverRating}/10</div>
-                      <Button variant="outline" className="h-11 text-xl" aria-label="Driver rating up" onClick={() => step(setDriverRating, driverRating, 1, 1, 10)}>+</Button>
+              </div>
+
+              <div className="grid gap-4 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Tap anything that happened</div>
+                {tagGroups.map((group) => (
+                  <div key={group.label} className="space-y-2">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.label}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {group.tags.map((tag) => {
+                        const selected = matchTags.includes(tag)
+                        return (
+                          <Button
+                            key={tag}
+                            type="button"
+                            variant={selected ? "default" : "outline"}
+                            aria-pressed={selected}
+                            className="h-10 rounded-full px-4"
+                            onClick={() => setMatchTags((current) => selected ? current.filter((item) => item !== tag) : [...current, tag])}
+                          >
+                            {tagLabels[tag]}
+                          </Button>
+                        )
+                      })}
                     </div>
                   </div>
-                  <div className="rounded-lg border p-3">
-                    <div className="text-xs text-muted-foreground">Defense</div>
-                    <div className="mt-2 grid grid-cols-[2.75rem_1fr_2.75rem] items-center gap-1">
-                      <Button variant="outline" className="h-11 text-xl" aria-label="Defense rating down" onClick={() => step(setDefenseRating, defenseRating, -1, 1, 10)}>−</Button>
-                      <div className="text-center text-lg font-semibold tabular-nums">{defenseRating}/10</div>
-                      <Button variant="outline" className="h-11 text-xl" aria-label="Defense rating up" onClick={() => step(setDefenseRating, defenseRating, 1, 1, 10)}>+</Button>
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  {(["none", "low", "mid", "high"] as MatchEndgameResult[]).map((result) => (
-                    <Button key={result} variant={matchEndgame === result ? "default" : "outline"} onClick={() => setMatchEndgame(result)} className="h-11 capitalize">
-                      {result} climb
-                    </Button>
-                  ))}
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {tags.map((tag) => (
-                    <label key={tag} className="flex items-center gap-3 rounded-lg border p-3">
-                      <Checkbox checked={matchTags.includes(tag)} onCheckedChange={(checked) => setMatchTags((current) => checked ? [...current, tag] : current.filter((item) => item !== tag))} />
-                      <span className="text-sm capitalize">{tag.replaceAll("_", " ")}</span>
-                    </label>
-                  ))}
-                </div>
-                <div className="mt-3 grid gap-3">
-                  <Textarea value={autoNotes} onChange={(event) => setAutoNotes(event.target.value)} placeholder="Auto notes" />
-                  <Textarea value={teleopNotes} onChange={(event) => setTeleopNotes(event.target.value)} placeholder="Teleop notes" />
-                  <Textarea value={endgameNotes} onChange={(event) => setEndgameNotes(event.target.value)} placeholder="Endgame notes" />
-                </div>
+                ))}
+              </div>
+
+              <div className="grid gap-3 rounded-lg border p-4">
+                <div className="text-sm font-semibold">Notes <span className="font-normal text-muted-foreground">(optional)</span></div>
+                <Textarea value={autoNotes} onChange={(event) => setAutoNotes(event.target.value)} placeholder="Auto: where did they start, what path did they run?" />
+                <Textarea value={teleopNotes} onChange={(event) => setTeleopNotes(event.target.value)} placeholder="Teleop: where did they shoot from, anything slow or broken?" />
+                <Textarea value={endgameNotes} onChange={(event) => setEndgameNotes(event.target.value)} placeholder="Endgame: how fast was the climb, did it fail?" />
+              </div>
+              <div>
                 {matchStatus ? (
                   <div
                     role="status"
@@ -1330,7 +1582,7 @@ export function HomeRoute() {
                         <span>Current EPA {statboticsEpaByTeamId[team._id] != null ? statboticsEpaByTeamId[team._id]?.toFixed(1) : "n/a"}</span>
                         <span>Drv {teamStats[team._id]?.avgDriver.toFixed(1) ?? "0.0"}</span>
                         <span>Tele {teamStats[team._id]?.avgTeleop.toFixed(1) ?? "0.0"}</span>
-                        <span>Climb {teamStats[team._id]?.avgClimb ?? "none"}</span>
+                        <span>Climb {endgameLabels[teamStats[team._id]?.avgClimb ?? "none"] ?? "No climb"}</span>
                       </div>
                       {canManagePicklist ? <div className="mt-2 grid grid-cols-2 gap-1">
                         {columns.filter((target) => target !== column).slice(0, 4).map((target) => (
