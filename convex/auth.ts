@@ -35,9 +35,12 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
             throw new ConvexError("BAD_TEAM_CODE")
           }
         }
-        // Convex values can't be `undefined`, so only include name when set.
+        // Convex values can't be `undefined`, so build a plain string map
+        // and only add name when it's set.
+        const profile: Record<string, string> & { email: string } = { email }
         const name = String(params.name ?? "").trim().slice(0, 40)
-        return name ? { email, name } : { email }
+        if (name) profile.name = name
+        return profile
       },
       validatePasswordRequirements(password) {
         if (password.length < 8 || password.length > 128) {
