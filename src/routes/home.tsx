@@ -16,6 +16,7 @@ import type { MatchEndgameResult, MatchTag, PickTier } from "@/lib/types"
 import { useUiStore } from "@/stores/ui-store"
 import frc1880Logo from "@/assets/frc1880.png"
 import { api } from "../../convex/_generated/api"
+import type { Id } from "../../convex/_generated/dataModel"
 
 const tags: MatchTag[] = ["fast", "accurate", "good_driver", "plays_defense", "tippy", "broke_down", "inconsistent"]
 const columns: PickTier[] = ["tier1", "tier2", "tier3", "do_not_pick", "uncategorized"]
@@ -377,11 +378,16 @@ export function HomeRoute() {
   async function handleAdminUnlock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setAdminError("")
-    if (adminKeyEntry.trim() !== "1880") {
-      setAdminError("Invalid mentor key.")
+    if (!adminKeyEntry.trim()) {
+      setAdminError("Enter the mentor key.")
       return
     }
-    await bootstrapProfile({ displayName: authNickname.trim(), adminKey: adminKeyEntry.trim() })
+    try {
+      await bootstrapProfile({ displayName: authNickname.trim(), adminKey: adminKeyEntry.trim() })
+      setAdminKeyEntry("")
+    } catch {
+      setAdminError("Invalid mentor key.")
+    }
   }
 
   async function handleAssignRole(profileId: string, role: UserRole) {
@@ -1131,7 +1137,7 @@ export function HomeRoute() {
                   event.preventDefault()
                   if (!canManagePicklist) return
                   const droppedTeamId = event.dataTransfer.getData("teamId")
-                  if (droppedTeamId) void updateTeamPickTier({ teamId: droppedTeamId, pickTier: column })
+                  if (droppedTeamId) void updateTeamPickTier({ teamId: droppedTeamId as Id<"teams">, pickTier: column })
                 }}
               >
                 <div className="mb-3 flex items-center justify-between text-sm font-semibold">

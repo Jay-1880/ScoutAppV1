@@ -1,11 +1,10 @@
 import { getAuthUserId } from "@convex-dev/auth/server"
 import { action, mutation, query, type MutationCtx } from "./_generated/server"
 import { internal } from "./_generated/api"
-import type { Doc, Id } from "./_generated/dataModel"
+import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 
 const TBA_BASE = "https://www.thebluealliance.com/api/v3"
-const ADMIN_KEY = "1880"
 declare const process: { env: Record<string, string | undefined> }
 
 type AppRole = "mentor" | "lead_scout" | "pit" | "tech" | "scout"
@@ -160,20 +159,38 @@ export const currentUser = query({
   },
 })
 
+// The mentor key lives in a Convex environment variable (MENTOR_KEY), never in code.
+// If no mentor exists yet, the first account to sign up becomes the mentor.
+async function anyMentorExists(ctx: MutationCtx) {
+  const profiles = await ctx.db.query("profiles").collect()
+  return profiles.some((profile) => normalizeRole(profile.role) === "mentor")
+}
+
 export const bootstrapProfile = mutation({
-  handler: async (ctx, args: { displayName?: string; adminKey?: string }) => {
+  args: {
+    displayName: v.optional(v.string()),
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx)
     if (!userId) {
       return null
     }
-    const role = args.adminKey === ADMIN_KEY ? "mentor" : "scout"
+    const mentorKey = process.env.MENTOR_KEY?.trim()
+    const providedKey = args.adminKey?.trim()
+    if (providedKey && (!mentorKey || providedKey !== mentorKey)) {
+      throw new Error("Invalid mentor key.")
+    }
+    const keyUnlocksMentor = Boolean(providedKey && mentorKey && providedKey === mentorKey)
+    const role = keyUnlocksMentor || !(await anyMentorExists(ctx)) ? "mentor" : "scout"
+    const displayName = args.displayName?.trim().slice(0, 40) || undefined
     const existing = await ctx.db
       .query("profiles")
       .withIndex("userId", (q) => q.eq("userId", userId))
       .unique()
     if (existing) {
       if (normalizeRole(existing.role) !== "mentor" && role === "mentor") {
-        await ctx.db.patch(existing._id, { role: "mentor", displayName: args.displayName ?? existing.displayName })
+        await ctx.db.patch(existing._id, { role: "mentor", displayName: displayName ?? existing.displayName })
         await logActivity(ctx, { actorUserId: userId, action: "Became mentor", details: "Unlocked mentor access." })
         return await ctx.db.get(existing._id)
       }
@@ -181,13 +198,13 @@ export const bootstrapProfile = mutation({
     }
     const profileId = await ctx.db.insert("profiles", {
       userId,
-      displayName: args.displayName,
+      displayName,
       role,
     })
     await logActivity(ctx, {
       actorUserId: userId,
       action: role === "mentor" ? "Created mentor profile" : "Signed up",
-      details: args.displayName ? `Display name set to ${args.displayName}.` : undefined,
+      details: displayName ? `Display name set to ${displayName}.` : undefined,
     })
     return profileId
   },
@@ -195,13 +212,17 @@ export const bootstrapProfile = mutation({
 
 export const getWorkspace = query({
   handler: async (ctx) => {
+    // Nothing is readable without signing in.
     const userId = await getAuthUserId(ctx)
-    const profile = userId
-      ? await ctx.db
-          .query("profiles")
-          .withIndex("userId", (q) => q.eq("userId", userId))
-          .unique()
-      : null
+    if (!userId) return null
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("userId", (q) => q.eq("userId", userId))
+      .unique()
+    if (!profile) return null
+    const role = normalizeRole(profile.role)
+    const canSeeStrategy = role === "mentor" || role === "lead_scout"
+    const canSeePitCrew = canSeeStrategy || role === "pit"
     const event = await ctx.db.query("events").order("desc").first()
     const teams = event
       ? await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
@@ -220,7 +241,7 @@ export const getWorkspace = query({
           })),
         )
       : []
-    const picklists = event
+    const picklists = event && canSeeStrategy
       ? await ctx.db.query("picklists").withIndex("eventIdOwner", (q) => q.eq("eventId", event._id)).collect()
       : []
     const picklistEntries = await Promise.all(
@@ -228,16 +249,17 @@ export const getWorkspace = query({
         ctx.db.query("picklistEntries").withIndex("picklistId", (q) => q.eq("picklistId", picklist._id)).collect(),
       ),
     ).then((entryGroups) => entryGroups.flat())
-    const role = normalizeRole(profile?.role)
     const techMessages = event
       ? await ctx.db.query("techMessages").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
       : []
-    const pitCrewItems = event
+    const pitCrewItems = event && canSeePitCrew
       ? await ctx.db.query("pitCrewItems").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
       : []
-    const activityLogs = event
-      ? await ctx.db.query("activityLogs").withIndex("eventId", (q) => q.eq("eventId", event._id)).order("desc").take(100)
-      : await ctx.db.query("activityLogs").order("desc").take(100)
+    const activityLogs = !canSeeStrategy
+      ? []
+      : event
+        ? await ctx.db.query("activityLogs").withIndex("eventId", (q) => q.eq("eventId", event._id)).order("desc").take(100)
+        : await ctx.db.query("activityLogs").order("desc").take(100)
     const profiles = role === "mentor" ? await ctx.db.query("profiles").collect() : []
     const tbaSetting = role === "mentor"
       ? await ctx.db.query("appSettings").withIndex("key", (q) => q.eq("key", "tbaApiKey")).unique()
@@ -288,7 +310,8 @@ export const generatePitPhotoUploadUrl = mutation({
 })
 
 export const saveTbaApiKey = mutation({
-  handler: async (ctx, args: { apiKey: string }) => {
+  args: { apiKey: v.string() },
+  handler: async (ctx, args) => {
     const userId = await requireMentor(ctx)
     const apiKey = normalizeTbaApiKey(args.apiKey)
     if (!apiKey) throw new Error("TBA API key is required")
@@ -308,7 +331,14 @@ export const saveTbaApiKey = mutation({
 })
 
 export const saveEvent = mutation({
-  handler: async (ctx, args: { eventKey: string; name: string; city?: string; state?: string; country?: string }) => {
+  args: {
+    eventKey: v.string(),
+    name: v.string(),
+    city: v.optional(v.string()),
+    state: v.optional(v.string()),
+    country: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
     const userId = await requireMentor(ctx)
     const existing = await ctx.db
       .query("events")
@@ -330,7 +360,16 @@ export const saveEvent = mutation({
 export const importEvent = action({
   args: { eventKey: v.string() },
   handler: async (ctx, args): Promise<ImportEventResult> => {
+    const userId = await getAuthUserId(ctx)
+    if (!userId) return { ok: false, error: "Sign in first." }
+    const callerRole: string | null = await ctx.runQuery(internal.settings.getRoleForUser, { userId })
+    if (normalizeRole(callerRole ?? undefined) !== "mentor") {
+      return { ok: false, error: "Mentor access required to import events." }
+    }
     const eventKey = args.eventKey.trim()
+    if (!/^\d{4}[a-z0-9]+$/i.test(eventKey)) {
+      return { ok: false, error: "That doesn't look like a TBA event key (example: 2026nytr)." }
+    }
     const storedApiKey: string | null = await ctx.runQuery(internal.settings.getTbaApiKey)
     const apiKey: string | undefined = storedApiKey ? normalizeTbaApiKey(storedApiKey) : process.env.TBA_API_KEY ? normalizeTbaApiKey(process.env.TBA_API_KEY) : undefined
     if (!apiKey) {
@@ -416,16 +455,35 @@ export const importEvent = action({
   },
 })
 
+const importedTeamValidator = v.object({
+  key: v.string(),
+  number: v.number(),
+  nickname: v.string(),
+  rank: v.optional(v.number()),
+  city: v.optional(v.string()),
+  stateProv: v.optional(v.string()),
+  country: v.optional(v.string()),
+})
+
+const importedMatchValidator = v.object({
+  key: v.string(),
+  number: v.number(),
+  red: v.array(v.number()),
+  blue: v.array(v.number()),
+  time: v.optional(v.number()),
+})
+
 export const upsertImportedEvent = mutation({
-  handler: async (ctx, args: {
-    eventKey: string
-    name: string
-    city?: string
-    state?: string
-    country?: string
-    teams: Array<{ key: string; number: number; nickname: string; rank?: number; city?: string; stateProv?: string; country?: string }>
-    matches: Array<{ key: string; number: number; red: number[]; blue: number[]; time?: number }>
-  }) => {
+  args: {
+    eventKey: v.string(),
+    name: v.string(),
+    city: v.optional(v.string()),
+    state: v.optional(v.string()),
+    country: v.optional(v.string()),
+    teams: v.array(importedTeamValidator),
+    matches: v.array(importedMatchValidator),
+  },
+  handler: async (ctx, args) => {
     const userId = await requireMentor(ctx)
     let event = await ctx.db
       .query("events")
@@ -442,68 +500,93 @@ export const upsertImportedEvent = mutation({
         importedBy: userId,
       })
       event = await ctx.db.get(eventId)
+    } else {
+      await ctx.db.patch(event._id, { name: args.name, importedAt: Date.now(), importedBy: userId })
     }
     if (!event) throw new Error("Event import failed")
-    const existingTeams = await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
-    for (const team of existingTeams) await ctx.db.delete(team._id)
-    const existingMatches = await ctx.db.query("matches").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
-    for (const match of existingMatches) await ctx.db.delete(match._id)
+    const eventId = event._id
+
+    // Update teams and matches IN PLACE (matched by TBA key) so existing
+    // match reports, pit reports and picklists keep pointing at valid IDs.
+    const existingTeams = await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", eventId)).collect()
+    const teamsByKey = new Map(existingTeams.map((team) => [team.tbaTeamKey, team]))
     for (const team of args.teams) {
-      if (!team.key) {
-        throw new Error(`Imported team ${team.number} is missing a TBA team key.`)
-      }
-      await ctx.db.insert("teams", {
-        eventId: event._id,
-        tbaTeamKey: team.key,
+      const fields = {
         teamNumber: team.number,
         nickname: team.nickname,
         eventRank: team.rank,
         city: team.city,
         state: team.stateProv,
         country: team.country,
-        pitStatus: "not_scouted",
-        pickTier: "uncategorized",
-      })
+      }
+      const existing = teamsByKey.get(team.key)
+      if (existing) {
+        await ctx.db.patch(existing._id, fields)
+      } else {
+        await ctx.db.insert("teams", {
+          eventId,
+          tbaTeamKey: team.key,
+          ...fields,
+          pitStatus: "not_scouted",
+          pickTier: "uncategorized",
+        })
+      }
     }
+
+    const existingMatches = await ctx.db.query("matches").withIndex("eventId", (q) => q.eq("eventId", eventId)).collect()
+    const matchesByKey = new Map(existingMatches.map((match) => [match.tbaMatchKey, match]))
     for (const match of args.matches) {
-      await ctx.db.insert("matches", {
-        eventId: event._id,
-        tbaMatchKey: match.key,
+      const fields = {
         matchNumber: match.number,
         redTeamNumbers: match.red,
         blueTeamNumbers: match.blue,
         scheduledTime: match.time,
-      })
+      }
+      const existing = matchesByKey.get(match.key)
+      if (existing) {
+        await ctx.db.patch(existing._id, fields)
+      } else {
+        await ctx.db.insert("matches", { eventId, tbaMatchKey: match.key, ...fields })
+      }
     }
-    return event._id
+
+    await logActivity(ctx, {
+      actorUserId: userId,
+      eventId,
+      action: "Imported event",
+      details: `${args.eventKey}: ${args.teams.length} teams, ${args.matches.length} matches.`,
+    })
+    return eventId
   },
 })
 
 export const savePitReport = mutation({
-  handler: async (ctx, args: {
-    teamId: string
-    scoreAnywhere: boolean
-    scoreSpecificSpots: boolean
-    shootOnMove: boolean
-    climbLow: boolean
-    climbMid: boolean
-    climbHigh: boolean
-    traverse: "trench" | "bump" | "both" | "other"
-    drivetrain: string
-    notes?: string
-    photoIds?: Array<Id<"_storage">>
-  }) => {
-    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit", "scout"])
-    const team = await ctx.db.get(args.teamId as Id<"teams">)
+  args: {
+    teamId: v.id("teams"),
+    scoreAnywhere: v.boolean(),
+    scoreSpecificSpots: v.boolean(),
+    shootOnMove: v.boolean(),
+    climbLow: v.boolean(),
+    climbMid: v.boolean(),
+    climbHigh: v.boolean(),
+    traverse: v.union(v.literal("trench"), v.literal("bump"), v.literal("both"), v.literal("other")),
+    drivetrain: v.string(),
+    notes: v.optional(v.string()),
+    photoIds: v.optional(v.array(v.id("_storage"))),
+  },
+  handler: async (ctx, args) => {
+    const { userId, role } = await requireRole(ctx, ["mentor", "lead_scout", "pit", "scout"])
+    const team = await ctx.db.get(args.teamId)
     if (!team) throw new Error("Team not found")
+    if ((args.photoIds ?? []).length > 6) throw new Error("Up to 6 photos per pit report.")
     const existing = await ctx.db
       .query("pitReports")
-      .withIndex("teamId", (q) => q.eq("teamId", args.teamId as Id<"teams">))
+      .withIndex("teamId", (q) => q.eq("teamId", args.teamId))
       .first()
     const payload = {
       eventId: team.eventId,
-      teamId: args.teamId as Id<"teams">,
-      scoutUserId: userId,
+      teamId: args.teamId,
+      scoutUserId: existing?.scoutUserId ?? userId,
       scoreAnywhere: args.scoreAnywhere,
       scoreSpecificSpots: args.scoreSpecificSpots,
       shootOnMove: args.shootOnMove,
@@ -511,12 +594,24 @@ export const savePitReport = mutation({
       climbMid: args.climbMid,
       climbHigh: args.climbHigh,
       traverse: args.traverse,
-      drivetrain: args.drivetrain,
-      notes: args.notes,
-      photoIds: args.photoIds ?? [],
+      drivetrain: args.drivetrain.trim().slice(0, 40),
+      notes: args.notes?.trim().slice(0, 2000) || undefined,
+      photoIds: args.photoIds ?? existing?.photoIds ?? [],
     }
     if (existing) {
-      throw new Error("This team already has a pit report.")
+      // The original scout, a lead scout or a mentor can correct a pit report.
+      const canEdit = existing.scoutUserId === userId || role === "mentor" || role === "lead_scout"
+      if (!canEdit) {
+        throw new Error("This team already has a pit report. Ask a lead scout to update it.")
+      }
+      await ctx.db.patch(existing._id, payload)
+      await logActivity(ctx, {
+        actorUserId: userId,
+        eventId: team.eventId,
+        action: "Updated pit report",
+        details: `Updated team ${team.teamNumber}.`,
+      })
+      return existing._id
     }
     const id = await ctx.db.insert("pitReports", payload)
     await ctx.db.patch(team._id, { pitStatus: "scouted" })
@@ -530,23 +625,48 @@ export const savePitReport = mutation({
   },
 })
 
+const matchTagValidator = v.union(
+  v.literal("fast"),
+  v.literal("accurate"),
+  v.literal("good_driver"),
+  v.literal("plays_defense"),
+  v.literal("tippy"),
+  v.literal("broke_down"),
+  v.literal("inconsistent"),
+)
+
+function checkCount(label: string, value: number, max: number) {
+  if (!Number.isInteger(value) || value < 0 || value > max) {
+    throw new Error(`${label} must be a whole number from 0 to ${max}.`)
+  }
+}
+
+function cleanNote(note: string | undefined) {
+  return note?.trim().slice(0, 1000) || undefined
+}
+
 export const saveMatchReport = mutation({
-  handler: async (ctx, args: {
-    matchId: string
-    teamId: string
-    autoBallsScored: number
-    teleopBallsScored: number
-    autoNotes?: string
-    teleopNotes?: string
-    endgameResult: "none" | "low" | "mid" | "high"
-    endgameNotes?: string
-    driverRating: number
-    defenseRating: number
-    tags: Array<"fast" | "accurate" | "good_driver" | "plays_defense" | "tippy" | "broke_down" | "inconsistent">
-  }) => {
-    const userId = await requireUser(ctx)
-    const match = await ctx.db.get(args.matchId as Id<"matches">) as Doc<"matches"> | null
-    const team = await ctx.db.get(args.teamId as Id<"teams">) as Doc<"teams"> | null
+  args: {
+    matchId: v.id("matches"),
+    teamId: v.id("teams"),
+    autoBallsScored: v.number(),
+    teleopBallsScored: v.number(),
+    autoNotes: v.optional(v.string()),
+    teleopNotes: v.optional(v.string()),
+    endgameResult: v.union(v.literal("none"), v.literal("low"), v.literal("mid"), v.literal("high")),
+    endgameNotes: v.optional(v.string()),
+    driverRating: v.number(),
+    defenseRating: v.number(),
+    tags: v.array(matchTagValidator),
+  },
+  handler: async (ctx, args) => {
+    const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "pit", "tech", "scout"])
+    checkCount("Auto balls scored", args.autoBallsScored, 200)
+    checkCount("Teleop balls scored", args.teleopBallsScored, 500)
+    checkCount("Driver rating", args.driverRating, 10)
+    checkCount("Defense rating", args.defenseRating, 10)
+    const match = await ctx.db.get(args.matchId)
+    const team = await ctx.db.get(args.teamId)
     if (!match || !team) throw new Error("Match or team not found")
     const allowedTeams = [...match.redTeamNumbers, ...match.blueTeamNumbers]
     if (!allowedTeams.includes(team.teamNumber)) {
@@ -554,30 +674,30 @@ export const saveMatchReport = mutation({
     }
     const existingForScout = await ctx.db
       .query("matchReports")
-      .withIndex("matchIdScoutUser", (q) => q.eq("matchId", args.matchId as Id<"matches">).eq("scoutUserId", userId))
+      .withIndex("matchIdScoutUser", (q) => q.eq("matchId", args.matchId).eq("scoutUserId", userId))
       .first()
-    if (existingForScout && existingForScout.teamId !== args.teamId as Id<"teams">) {
+    if (existingForScout && existingForScout.teamId !== args.teamId) {
       throw new Error("This scout already has a robot for this match")
     }
     const payload = {
       eventId: match.eventId,
-      matchId: args.matchId as Id<"matches">,
-      teamId: args.teamId as Id<"teams">,
+      matchId: args.matchId,
+      teamId: args.teamId,
       scoutUserId: userId,
       autoBallsScored: args.autoBallsScored,
       teleopBallsScored: args.teleopBallsScored,
-      autoNotes: args.autoNotes,
-      teleopNotes: args.teleopNotes,
+      autoNotes: cleanNote(args.autoNotes),
+      teleopNotes: cleanNote(args.teleopNotes),
       endgameResult: args.endgameResult,
-      endgameNotes: args.endgameNotes,
+      endgameNotes: cleanNote(args.endgameNotes),
       driverRating: args.driverRating,
       defenseRating: args.defenseRating,
-      tags: args.tags,
+      tags: [...new Set(args.tags)],
     }
     const existingForTeam = await ctx.db
       .query("matchReports")
-      .withIndex("matchId", (q) => q.eq("matchId", args.matchId as Id<"matches">))
-      .filter((q) => q.eq(q.field("teamId"), args.teamId as Id<"teams">))
+      .withIndex("matchId", (q) => q.eq("matchId", args.matchId))
+      .filter((q) => q.eq(q.field("teamId"), args.teamId))
       .first()
     if (existingForTeam?.scoutUserId === userId) {
       await ctx.db.patch(existingForTeam._id, payload)
@@ -600,27 +720,34 @@ export const saveMatchReport = mutation({
   },
 })
 
+const pickTierValidator = v.union(
+  v.literal("tier1"),
+  v.literal("tier2"),
+  v.literal("tier3"),
+  v.literal("do_not_pick"),
+  v.literal("uncategorized"),
+)
+
 export const updateTeamPickTier = mutation({
-  handler: async (ctx, args: {
-    teamId: string
-    pickTier: "tier1" | "tier2" | "tier3" | "do_not_pick" | "uncategorized"
-  }) => {
+  args: { teamId: v.id("teams"), pickTier: pickTierValidator },
+  handler: async (ctx, args) => {
     await requirePicklistEditor(ctx)
-    await ctx.db.patch(args.teamId as Id<"teams">, { pickTier: args.pickTier })
+    await ctx.db.patch(args.teamId, { pickTier: args.pickTier })
   },
 })
 
 export const ensurePicklist = mutation({
-  handler: async (ctx, args: { eventId: string; name: string; isPrimary?: boolean }) => {
+  args: { eventId: v.id("events"), name: v.string(), isPrimary: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
     const { userId } = await requirePicklistEditor(ctx)
     const existing = await ctx.db
       .query("picklists")
-      .withIndex("eventIdOwner", (q) => q.eq("eventId", args.eventId as Id<"events">).eq("ownerUserId", userId))
+      .withIndex("eventIdOwner", (q) => q.eq("eventId", args.eventId).eq("ownerUserId", userId))
       .filter((q) => q.eq(q.field("name"), args.name))
       .first()
     if (existing) return existing._id
     return ctx.db.insert("picklists", {
-      eventId: args.eventId as Id<"events">,
+      eventId: args.eventId,
       ownerUserId: userId,
       name: args.name,
       isPrimary: Boolean(args.isPrimary),
@@ -636,7 +763,7 @@ export const createTechMessage = mutation({
   },
   handler: async (ctx, args) => {
     const { userId } = await requireRole(ctx, ["mentor", "lead_scout", "tech"])
-    const message = args.message.trim()
+    const message = args.message.trim().slice(0, 1000)
     if (!message) throw new Error("Tech note is required.")
     const id = await ctx.db.insert("techMessages", {
       eventId: args.eventId,
