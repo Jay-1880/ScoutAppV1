@@ -19,11 +19,12 @@ const climbLabels: Record<string, string> = { none: "Can't climb", l1: "Level 1"
 const traverseLabels: Record<string, string> = { trench: "Trench", bump: "Bump", both: "Trench or bump", other: "Neither" }
 const problemTags = new Set(["tipped_over", "disabled", "no_show", "broke_down", "tippy"])
 
-type SortKey = "score" | "teleop" | "auto" | "climb" | "driver" | "rank" | "number"
+type SortKey = "score" | "epa" | "teleop" | "auto" | "climb" | "driver" | "rank" | "number"
 type FilterKey = "hasData" | "climbHigh" | "moving" | "floor" | "reliable"
 
 const sortOptions: Array<{ value: SortKey; label: string }> = [
-  { value: "score", label: "Est. points" },
+  { value: "score", label: "Est. points (our data)" },
+  { value: "epa", label: "Statbotics EPA" },
   { value: "teleop", label: "Teleop fuel" },
   { value: "auto", label: "Auto fuel" },
   { value: "climb", label: "Climb" },
@@ -84,6 +85,7 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
     const max = (pick: (team: TeamSummary) => number | null) => Math.max(0, ...teams.map((team) => pick(team) ?? 0))
     return {
       score: max(estPoints),
+      epa: max((team) => team.statbotics?.epa ?? null),
       teleop: max((team) => team.avgTeleopFuel),
       auto: max((team) => team.avgAutoFuel),
       climb: max((team) => team.avgClimbPoints),
@@ -93,10 +95,11 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
 
   const leaders = useMemo(() => {
     const withData = teams.filter((team) => team.matchCount > 0)
-    const top = (pick: (team: TeamSummary) => number | null) =>
-      [...withData].sort((a, b) => (pick(b) ?? -1) - (pick(a) ?? -1)).slice(0, 3).map((team) => ({ team, value: pick(team) }))
+    const top = (pick: (team: TeamSummary) => number | null, pool = withData) =>
+      [...pool].filter((team) => pick(team) != null).sort((a, b) => (pick(b) ?? -1) - (pick(a) ?? -1)).slice(0, 3).map((team) => ({ team, value: pick(team) }))
     return [
-      { label: "Most points", items: top(estPoints), digits: 0 },
+      { label: "Statbotics EPA", items: top((team) => team.statbotics?.epa ?? null, teams), digits: 1 },
+      { label: "Most points (our data)", items: top(estPoints), digits: 0 },
       { label: "Teleop fuel", items: top((team) => team.avgTeleopFuel), digits: 1 },
       { label: "Climb points", items: top((team) => team.avgClimbPoints), digits: 0 },
     ]
@@ -116,6 +119,7 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
     const num = (value: number | null) => value ?? -1
     return [...filtered].sort((a, b) => {
       if (sort === "score") return num(estPoints(b)) - num(estPoints(a))
+      if (sort === "epa") return num(b.statbotics?.epa ?? null) - num(a.statbotics?.epa ?? null)
       if (sort === "teleop") return num(b.avgTeleopFuel) - num(a.avgTeleopFuel)
       if (sort === "auto") return num(b.avgAutoFuel) - num(a.avgAutoFuel)
       if (sort === "climb") return num(b.avgClimbPoints) - num(a.avgClimbPoints)
@@ -136,7 +140,7 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
   return (
     <div className="grid gap-3">
       {/* Leaders: the quick answer to "who's best at what?" */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {leaders.map((group) => (
           <div key={group.label} className="surface-card p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</div>
@@ -160,7 +164,7 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
                 ))}
               </ol>
             ) : (
-              <p className="mt-2 text-sm text-muted-foreground">No match data yet.</p>
+              <p className="mt-2 text-sm text-muted-foreground">No data yet.</p>
             )}
           </div>
         ))}
@@ -204,7 +208,7 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
           })}
         </div>
         <div className="text-xs text-muted-foreground">
-          {rows.length} of {teams.length} teams · "Est. points" = avg fuel + avg climb points + auto L1 bonus
+          {rows.length} of {teams.length} teams · EPA from Statbotics · "Est. points" = our scouts' avg fuel + climb points + auto L1 bonus
         </div>
       </div>
 
@@ -232,6 +236,7 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
                       <span className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                         <span>{team.matchCount} {team.matchCount === 1 ? "match" : "matches"}</span>
                         {team.eventRank ? <span>Rank {team.eventRank}</span> : null}
+                        {team.statbotics?.wins != null ? <span>{team.statbotics.wins}-{team.statbotics.losses ?? 0}-{team.statbotics.ties ?? 0}</span> : null}
                         {problems ? <span className="text-destructive">⚠ {problems} problem{problems === 1 ? "" : "s"}</span> : null}
                       </span>
                     </span>
@@ -241,7 +246,8 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
                     </span>
                     <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
                   </div>
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-5 gap-3">
+                    <Stat label="EPA" value={fmt(team.statbotics?.epa ?? null)} raw={team.statbotics?.epa ?? null} max={maxes.epa} />
                     <Stat label="Auto" value={fmt(team.avgAutoFuel)} raw={team.avgAutoFuel} max={maxes.auto} />
                     <Stat label="Teleop" value={fmt(team.avgTeleopFuel)} raw={team.avgTeleopFuel} max={maxes.teleop} />
                     <Stat label="Climb" value={fmt(team.avgClimbPoints, 0)} raw={team.avgClimbPoints} max={maxes.climb} />
@@ -283,6 +289,21 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
                         </>
                       ) : (
                         <div className="text-muted-foreground">Not pit scouted yet.</div>
+                      )}
+                    </div>
+                    <div className="grid content-start gap-1.5 md:col-span-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Statbotics</div>
+                      {team.statbotics ? (
+                        <div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                          <Row label="EPA (expected points)" value={`${fmt(team.statbotics.epa ?? null)}${team.statbotics.epaMax != null ? ` · best ${fmt(team.statbotics.epaMax)}` : ""}`} />
+                          <Row label="Auto / Teleop / Endgame" value={`${fmt(team.statbotics.autoPoints ?? null)} / ${fmt(team.statbotics.teleopPoints ?? null)} / ${fmt(team.statbotics.endgamePoints ?? null)}`} />
+                          <Row label="Expected fuel (auto / teleop)" value={`${fmt(team.statbotics.autoFuel ?? null)} / ${fmt(team.statbotics.teleopFuel ?? null)}`} />
+                          <Row label="Record (W-L-T)" value={team.statbotics.wins != null ? `${team.statbotics.wins}-${team.statbotics.losses ?? 0}-${team.statbotics.ties ?? 0}` : "—"} />
+                          <Row label="Qual rank" value={team.statbotics.qualRank != null ? `${team.statbotics.qualRank}${team.statbotics.qualTeams ? ` of ${team.statbotics.qualTeams}` : ""}` : "—"} />
+                          <Row label="RP per match" value={fmt(team.statbotics.rpsPerMatch ?? null, 2)} />
+                        </div>
+                      ) : (
+                        <div className="text-muted-foreground">No Statbotics data for this team yet.</div>
                       )}
                     </div>
                     {showNotes && (team.pit?.notes || team.notes.length) ? (

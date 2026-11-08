@@ -9,11 +9,13 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as crons from "../crons.js";
 import type * as gallery from "../gallery.js";
 import type * as guest from "../guest.js";
 import type * as http from "../http.js";
 import type * as scouting from "../scouting.js";
 import type * as settings from "../settings.js";
+import type * as statbotics from "../statbotics.js";
 
 import type {
   ApiFromModules,
@@ -23,11 +25,13 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  crons: typeof crons;
   gallery: typeof gallery;
   guest: typeof guest;
   http: typeof http;
   scouting: typeof scouting;
   settings: typeof settings;
+  statbotics: typeof statbotics;
 }>;
 
 /**
