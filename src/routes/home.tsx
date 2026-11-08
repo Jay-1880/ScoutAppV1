@@ -4,6 +4,7 @@ import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react"
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
+import { Gallery } from "@/components/gallery"
 import { TeamDetailDialog } from "@/components/team-detail-dialog"
 import { ThemeModeMenu } from "@/components/theme-mode-menu"
 import { Button } from "@/components/ui/button"
@@ -335,6 +336,7 @@ export function HomeRoute() {
     const roleCanSeeActiveTab =
       isMentor ||
       activeTab === "dashboard" ||
+      activeTab === "gallery" ||
       (activeTab === "teams" && ["lead_scout", "pit", "tech", "scout"].includes(currentRole)) ||
       (activeTab === "pit" && ["lead_scout", "pit", "scout"].includes(currentRole)) ||
       (activeTab === "pitCrew" && ["lead_scout", "pit"].includes(currentRole)) ||
@@ -579,12 +581,15 @@ export function HomeRoute() {
     return (
       <main className="min-h-svh bg-background px-4 py-6 text-foreground">
         <div className="mx-auto flex min-h-[calc(100svh-3rem)] w-full max-w-md flex-col justify-center">
-          <div className="rounded-xl border bg-card p-5 shadow-sm">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Sparkles className="size-4" />
-              2026 FRC Scouting
+          <div className="surface-card fade-up p-5">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <img src={frc1880Logo} alt="Team 1880 logo" className="logo-float size-16 rounded-xl object-contain shadow-sm" />
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">FRC Team 1880</div>
+                <div className="text-sm font-semibold">Warriors of East Harlem</div>
+              </div>
             </div>
-            <h1 className="mt-4 text-2xl font-semibold">Sign in to scout</h1>
+            <h1 className="mt-5 text-2xl font-semibold">Sign in to scout</h1>
             <p className="mt-1 text-sm text-muted-foreground">Create an account or sign in before viewing event data, teams, matches, or pick lists.</p>
             <form className="mt-5 space-y-4" onSubmit={(event) => void handleAuthSubmit(event)}>
               <div className="grid grid-cols-2 gap-2">
@@ -618,11 +623,15 @@ export function HomeRoute() {
   return (
     <main className="min-h-svh bg-background text-foreground">
       <div className="mx-auto flex min-h-svh w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6">
-        <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 shadow-sm">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Sparkles className="size-4" />
-              2026 FRC Scouting
+        <header className="app-header sticky top-3 z-40 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <img src={frc1880Logo} alt="Team 1880 logo" className="size-8 rounded-md object-contain" />
+            <div className="leading-tight">
+              <div className="text-sm font-semibold">1880 Scout</div>
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Sparkles className="size-3" />
+                2026 FRC Scouting
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -640,6 +649,17 @@ export function HomeRoute() {
 
         {activeTab === "dashboard" ? (
           <section className="grid gap-4">
+            <div className="hero-banner fade-up relative overflow-hidden rounded-xl border p-5 shadow-sm">
+              <img src={frc1880Logo} alt="" aria-hidden="true" className="pointer-events-none absolute -right-6 -top-6 size-40 rotate-12 object-contain opacity-10" />
+              <div className="relative flex items-center gap-4">
+                <img src={frc1880Logo} alt="Team 1880 logo" className="logo-float size-14 rounded-xl object-contain shadow-sm" />
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">FRC Team 1880</div>
+                  <div className="text-xl font-semibold sm:text-2xl">Warriors of East Harlem</div>
+                  <div className="text-sm text-muted-foreground">Welcome back{currentUser?.profile?.displayName ? `, ${currentUser.profile.displayName}` : ""}. Let's scout.</div>
+                </div>
+              </div>
+            </div>
             <div className="rounded-xl border bg-card p-4 shadow-sm">
               <div className="text-sm font-semibold">Current event</div>
               <div className="mt-2 text-2xl font-semibold">{activeEvent?.name ?? "No event imported yet"}</div>
@@ -1071,6 +1091,8 @@ export function HomeRoute() {
             </div>
           </div>
         </section> : null}
+
+        {activeTab === "gallery" ? <Gallery /> : null}
 
         {activeTab === "tech" ? (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
