@@ -224,9 +224,11 @@ export const getWorkspace = query({
     const canSeeStrategy = role === "mentor" || role === "lead_scout"
     const canSeePitCrew = canSeeStrategy || role === "pit"
     const event = await ctx.db.query("events").order("desc").first()
-    const teams = event
+    const allTeams = event
       ? await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
       : []
+    // Pick list notes are only for mentors and lead scouts.
+    const teams = canSeeStrategy ? allTeams : allTeams.map((team) => ({ ...team, pickNote: undefined }))
     const matches = event
       ? await ctx.db.query("matches").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
       : []
@@ -752,7 +754,51 @@ export const updateTeamPickTier = mutation({
   args: { teamId: v.id("teams"), pickTier: pickTierValidator },
   handler: async (ctx, args) => {
     await requirePicklistEditor(ctx)
-    await ctx.db.patch(args.teamId, { pickTier: args.pickTier })
+    const team = await ctx.db.get(args.teamId)
+    if (!team) throw new Error("Team not found")
+    if (team.pickTier === args.pickTier) return
+    // Drop the team at the bottom of its new tier.
+    const eventTeams = await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", team.eventId)).collect()
+    const lastOrder = Math.max(0, ...eventTeams.filter((other) => other.pickTier === args.pickTier).map((other) => other.pickOrder ?? 0))
+    await ctx.db.patch(args.teamId, { pickTier: args.pickTier, pickOrder: lastOrder + 1 })
+  },
+})
+
+// Save the full order of one tier at once (after moving teams up/down or auto-sorting).
+export const reorderPickTier = mutation({
+  args: { teamIds: v.array(v.id("teams")) },
+  handler: async (ctx, args) => {
+    await requirePicklistEditor(ctx)
+    if (args.teamIds.length > 200) throw new Error("Too many teams")
+    for (const [index, teamId] of args.teamIds.entries()) {
+      await ctx.db.patch(teamId, { pickOrder: index + 1 })
+    }
+  },
+})
+
+export const setTeamPicked = mutation({
+  args: { teamId: v.id("teams"), picked: v.boolean() },
+  handler: async (ctx, args) => {
+    await requirePicklistEditor(ctx)
+    await ctx.db.patch(args.teamId, { pickedByOther: args.picked })
+  },
+})
+
+export const setPickNote = mutation({
+  args: { teamId: v.id("teams"), note: v.string() },
+  handler: async (ctx, args) => {
+    await requirePicklistEditor(ctx)
+    await ctx.db.patch(args.teamId, { pickNote: args.note.trim().slice(0, 300) || undefined })
+  },
+})
+
+// Before alliance selection: un-mark every "picked" team.
+export const clearPickedTeams = mutation({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, args) => {
+    await requirePicklistEditor(ctx)
+    const teams = await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", args.eventId)).collect()
+    for (const team of teams) if (team.pickedByOther) await ctx.db.patch(team._id, { pickedByOther: false })
   },
 })
 

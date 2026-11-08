@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState, type FormEvent } 
 import { useAuthActions } from "@convex-dev/auth/react"
 import { ConvexError } from "convex/values"
 import { useAction, useConvexAuth, useConvexConnectionState, useMutation, useQuery } from "convex/react"
-import { AlertCircle, Eye, EyeOff, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
+import { AlertCircle, Eye, EyeOff, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, Sparkles, Trash2, Users, Wrench } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
 import { GuestPassManager } from "@/components/guest-pass-manager"
@@ -19,6 +19,7 @@ import { api } from "../../convex/_generated/api"
 
 // Loaded only when opened, so the first page load on phones is smaller.
 const Gallery = lazy(() => import("@/components/gallery").then((module) => ({ default: module.Gallery })))
+const PicklistBoard = lazy(() => import("@/components/picklist-board").then((module) => ({ default: module.PicklistBoard })))
 const DataTab = lazy(() => import("@/components/data-tab").then((module) => ({ default: module.DataTab })))
 const TeamDetailDialog = lazy(() => import("@/components/team-detail-dialog").then((module) => ({ default: module.TeamDetailDialog })))
 
@@ -41,7 +42,6 @@ function writeJson(storage: Storage, key: string, value: unknown) {
   }
 }
 
-import type { Id } from "../../convex/_generated/dataModel"
 
 // Grouped so scouts can scan them quickly during a match.
 const tagGroups: Array<{ label: string; tags: MatchTag[] }> = [
@@ -135,7 +135,6 @@ function YesNo({ label, hint, value, onChange }: { label: string; hint?: string;
     />
   )
 }
-const columns: PickTier[] = ["tier1", "tier2", "tier3", "do_not_pick", "uncategorized"]
 const columnLabels: Record<PickTier, string> = {
   tier1: "Tier 1",
   tier2: "Tier 2",
@@ -219,7 +218,6 @@ export function HomeRoute() {
   const saveTbaApiKey = useMutation(api.scouting.saveTbaApiKey)
   const savePitReport = useMutation(api.scouting.savePitReport)
   const saveMatchReport = useMutation(api.scouting.saveMatchReport)
-  const updateTeamPickTier = useMutation(api.scouting.updateTeamPickTier)
   const ensurePicklist = useMutation(api.scouting.ensurePicklist)
   const assignUserRole = useMutation(api.scouting.assignUserRole)
   const deleteUserProfile = useMutation(api.scouting.deleteUserProfile)
@@ -295,8 +293,6 @@ export function HomeRoute() {
   const [endgameNotes, setEndgameNotes] = useState("")
   const [driverRating, setDriverRating] = useState(5)
   const [defenseRating, setDefenseRating] = useState(5)
-  const [picklistView, setPicklistView] = useState<"primary" | "personal">("personal")
-  const [picklistSearch, setPicklistSearch] = useState("")
   const [techMessage, setTechMessage] = useState("")
   const [techStatus, setTechStatus] = useState("")
   const [matchSubmitting, setMatchSubmitting] = useState(false)
@@ -370,22 +366,6 @@ export function HomeRoute() {
     ? teams.filter((team) => [...selectedMatch.redTeamNumbers, ...selectedMatch.blueTeamNumbers].includes(team.teamNumber))
     : teams
   const selectedMatchTeam = matchTeams.find((team) => team._id === matchTeamId) ?? matchTeams[0]
-  const groupedTeams = useMemo(() => {
-    const query = picklistSearch.trim().toLowerCase()
-    const visibleTeams = query
-      ? teams.filter((team) => `${team.teamNumber} ${team.nickname}`.toLowerCase().includes(query))
-      : teams
-    return columns.reduce<Record<PickTier, typeof teams>>((accumulator, column) => {
-      accumulator[column] = visibleTeams.filter((team) => team.pickTier === column)
-      return accumulator
-    }, {
-      tier1: [],
-      tier2: [],
-      tier3: [],
-      do_not_pick: [],
-      uncategorized: [],
-    })
-  }, [picklistSearch, teams])
   // Statbotics EPA is fetched and cached on the server (convex/statbotics.ts),
   // so phones download it once instead of hitting Statbotics for every team.
   const statbotics = useQuery(api.statbotics.getCurrent)
@@ -1581,87 +1561,11 @@ export function HomeRoute() {
           </section>
         ) : null}
 
-        {activeTab === "picklist" ? <section className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card p-4 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <ShieldAlert className="size-4" />
-                Pick list
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {canManagePicklist
-                  ? picklistView === "primary" ? "Mentor primary board and consensus merge target." : "Lead scout and mentor board controls."
-                  : "View-only for your role."}
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button size="sm" variant={picklistView === "primary" ? "default" : "outline"} onClick={() => setPicklistView("primary")}>Primary</Button>
-              <Button size="sm" variant={picklistView === "personal" ? "default" : "outline"} onClick={() => setPicklistView("personal")}>My lists</Button>
-            </div>
-          </div>
-          <div className="mt-4 grid gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="picklistSearch">Search teams</Label>
-              <Input
-                id="picklistSearch"
-                value={picklistSearch}
-                onChange={(event) => setPicklistSearch(event.target.value)}
-                placeholder="Search by team number or name"
-              />
-            </div>
-          </div>
-          <div className="mt-4 grid min-h-0 flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {columns.map((column) => (
-              <div
-                key={column}
-                className="flex max-h-[calc(100svh-18rem)] min-h-64 flex-col rounded-xl border bg-background p-3"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  if (!canManagePicklist) return
-                  const droppedTeamId = event.dataTransfer.getData("teamId")
-                  if (droppedTeamId) void updateTeamPickTier({ teamId: droppedTeamId as Id<"teams">, pickTier: column })
-                }}
-              >
-                <div className="mb-3 flex items-center justify-between text-sm font-semibold">
-                  <span>{columnLabels[column]}</span>
-                  <span className="text-xs text-muted-foreground">{groupedTeams[column]?.length ?? 0}</span>
-                </div>
-                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                  {(groupedTeams[column] ?? []).map((team) => (
-                    <div
-                      key={team._id}
-                      draggable={canManagePicklist}
-                      onDragStart={(event) => event.dataTransfer.setData("teamId", team._id)}
-                      className="rounded-lg border bg-card p-3 text-sm shadow-sm"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="font-semibold">{team.teamNumber}</div>
-                        <Trophy className="size-4 text-muted-foreground" />
-                      </div>
-                      <div className="text-muted-foreground">{team.nickname}</div>
-                      <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-muted-foreground">
-                        <span>{team.pitStatus === "scouted" ? "Pit done" : "Pit open"}</span>
-                        <span>Rank {team.eventRank ?? "n/a"}</span>
-                        <span>Current EPA {statboticsEpaByTeamId[team._id] != null ? statboticsEpaByTeamId[team._id]?.toFixed(1) : "n/a"}</span>
-                        <span>Drv {teamStats[team._id]?.avgDriver.toFixed(1) ?? "0.0"}</span>
-                        <span>Tele {teamStats[team._id]?.avgTeleop.toFixed(1) ?? "0.0"}</span>
-                        <span>Climb {endgameLabels[teamStats[team._id]?.avgClimb ?? "none"] ?? "No climb"}</span>
-                      </div>
-                      {canManagePicklist ? <div className="mt-2 grid grid-cols-2 gap-1">
-                        {columns.filter((target) => target !== column).slice(0, 4).map((target) => (
-                          <Button key={target} size="sm" variant="outline" onClick={() => void updateTeamPickTier({ teamId: team._id, pickTier: target })}>
-                            {columnLabels[target]}
-                          </Button>
-                        ))}
-                      </div> : null}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section> : null}
+        {activeTab === "picklist" ? (
+          <Suspense fallback={<div className="surface-card h-64 animate-pulse" />}>
+            <PicklistBoard teams={teams} eventId={activeEvent?._id} canEdit={canManagePicklist} />
+          </Suspense>
+        ) : null}
 
         {activeTab === "picklist" && currentRole === "lead_scout" ? <GuestPassManager /> : null}
 
