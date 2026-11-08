@@ -50,6 +50,12 @@ export default defineSchema({
       v.literal("do_not_pick"),
       v.literal("uncategorized"),
     ),
+    // Order within the pick tier (lower = higher on the list)
+    pickOrder: v.optional(v.number()),
+    // Marked during alliance selection when another alliance takes them
+    pickedByOther: v.optional(v.boolean()),
+    // Personal notes for the pick list (mentors / lead scouts only)
+    pickNote: v.optional(v.string()),
   }).index("eventId", ["eventId"]).index("eventIdTeamNumber", ["eventId", "teamNumber"]),
   matches: defineTable({
     eventId: v.id("events"),
