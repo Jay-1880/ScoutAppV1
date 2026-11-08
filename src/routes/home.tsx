@@ -876,8 +876,9 @@ export function HomeRoute() {
   return (
     <main className="min-h-svh text-foreground">
       <div className="safe-area mx-auto flex min-h-svh w-full max-w-7xl flex-col gap-4 px-3 py-3 sm:px-6 sm:py-4">
-        <header className="app-header sticky top-3 z-40 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
+        <header className="app-header sticky top-2 z-40 rounded-xl border px-3 py-2.5 shadow-sm sm:px-4">
+          <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
             <img src={frc1880Logo} alt="Team 1880 logo" className="size-8 rounded-md object-contain" />
             <div className="leading-tight">
               <div className="text-sm font-semibold">1880 Scout</div>
@@ -887,13 +888,16 @@ export function HomeRoute() {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <AppNav activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />
-
+          <div className="flex shrink-0 items-center gap-2">
+            <AppNav variant="mobile" activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />
             <ThemeModeMenu />
-            <Button variant="outline" size="sm" onClick={() => void signOut()}>
+            <Button variant="outline" size="sm" className="h-9" onClick={() => void signOut()}>
               Sign out
             </Button>
+          </div>
+          </div>
+          <div className="mt-2 hidden border-t pt-2 xl:block">
+            <AppNav variant="desktop" activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />
           </div>
         </header>
 

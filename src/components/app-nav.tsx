@@ -36,24 +36,26 @@ export function AppNav({
   activeTab,
   onTabChange,
   role,
+  variant,
 }: {
   activeTab: string
   onTabChange: (tab: AppTab) => void
   role: UserRole
+  variant: "desktop" | "mobile"
 }) {
   const visibleNavItems = navItems.filter((item) => canSeeTab(item.tab as AppTab, role))
   const [menuOpen, setMenuOpen] = useState(false)
 
-  return (
-    <>
-      <nav aria-label="Main" className="hidden items-center gap-1 xl:flex">
+  if (variant === "desktop") {
+    return (
+      <nav aria-label="Main" className="no-scrollbar hidden items-center gap-1 overflow-x-auto xl:flex">
         {visibleNavItems.map((item) => (
           <button
             key={item.label}
             type="button"
             onClick={() => onTabChange(item.tab as AppTab)}
             className={cn(
-              "nav-pill inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
+              "nav-pill inline-flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors",
               activeTab === item.tab ? "bg-primary text-primary-foreground" : "hover:bg-accent hover:text-accent-foreground",
             )}
           >
@@ -62,6 +64,11 @@ export function AppNav({
           </button>
         ))}
       </nav>
+    )
+  }
+
+  return (
+    <>
       <div className="xl:hidden">
         <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
           <SheetTrigger className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium hover:bg-muted">

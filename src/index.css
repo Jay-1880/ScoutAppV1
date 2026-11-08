@@ -136,9 +136,17 @@
   }
 
   .app-header {
-    background: color-mix(in oklch, var(--card) 82%, transparent);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    /* Nearly solid so page content never shows through the header */
+    background: color-mix(in oklch, var(--card) 96%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 
   .hero-banner {
