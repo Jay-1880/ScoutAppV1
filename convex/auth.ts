@@ -2,6 +2,10 @@ import { convexAuth } from "@convex-dev/auth/server"
 import { Password } from "@convex-dev/auth/providers/Password"
 import { ConvexError } from "convex/values"
 
+// The website build type-checks this file too, and it has no Node types,
+// so declare the bit of `process` we use (same as convex/scouting.ts).
+declare const process: { env: Record<string, string | undefined> }
+
 // Sign-in: username + password.
 // Sign-up: also needs the team join code, stored in the TEAM_JOIN_CODE
 // Convex environment variable, so only people who got the code from a
