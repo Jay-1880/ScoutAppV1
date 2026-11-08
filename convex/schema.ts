@@ -153,6 +153,16 @@ export default defineSchema({
       ),
     ),
   }).index("teamId", ["teamId"]).index("matchId", ["matchId"]).index("eventId", ["eventId"]).index("matchIdScoutUser", ["matchId", "scoutUserId"]),
+  guestPasses: defineTable({
+    code: v.string(),
+    label: v.string(),
+    includeNotes: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    revoked: v.boolean(),
+    lastUsedAt: v.optional(v.number()),
+  }).index("code", ["code"]).index("createdAt", ["createdAt"]),
   galleryPhotos: defineTable({
     eventId: v.optional(v.id("events")),
     storageId: v.id("_storage"),

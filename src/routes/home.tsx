@@ -5,6 +5,7 @@ import { useAction, useConvexAuth, useConvexConnectionState, useMutation, useQue
 import { AlertCircle, Eye, EyeOff, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
+import { GuestPassManager } from "@/components/guest-pass-manager"
 import { ThemeModeMenu } from "@/components/theme-mode-menu"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -980,6 +981,9 @@ export function HomeRoute() {
                 <LogIn className="size-4" />
                 {authBusy ? "One sec…" : authMode === "signIn" ? "Sign in" : "Create account"}
               </Button>
+              <a href="/guest" className="block rounded-lg border border-dashed p-3 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/50">
+                Alliance partner? <span className="font-medium text-foreground">View our scouting with a guest code</span>
+              </a>
               {authMode === "signIn" ? (
                 <p className="text-center text-xs text-muted-foreground">Forgot your password? Ask a mentor to remove your account in the Mentor tab, then create it again.</p>
               ) : null}
@@ -1161,6 +1165,7 @@ export function HomeRoute() {
                     )}
                   </div>
                 </div>
+                <GuestPassManager />
                 <div className="rounded-xl border bg-card p-4 shadow-sm">
                   <div className="flex items-center gap-2 text-sm font-semibold">
                     <Clock3 className="size-4" />
@@ -1719,6 +1724,8 @@ export function HomeRoute() {
             ))}
           </div>
         </section> : null}
+
+        {activeTab === "picklist" && currentRole === "lead_scout" ? <GuestPassManager /> : null}
 
         {teamDetailOpen ? <Suspense fallback={null}><TeamDetailDialog
           open={teamDetailOpen}
