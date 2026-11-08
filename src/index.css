@@ -109,3 +109,89 @@
     -moz-osx-font-smoothing: grayscale;
   }
 }
+
+/* ------------------------------------------------------------------
+   Light visual polish: soft background, gentle entrance and hover
+   effects. Everything is disabled for people who prefer reduced motion.
+   ------------------------------------------------------------------ */
+
+@layer base {
+  body {
+    background-image:
+      radial-gradient(60rem 30rem at 100% -10%, color-mix(in oklch, var(--accent) 35%, transparent), transparent 70%),
+      radial-gradient(50rem 25rem at -10% 110%, color-mix(in oklch, var(--ring) 12%, transparent), transparent 70%);
+    background-attachment: fixed;
+  }
+}
+
+@layer components {
+  .surface-card {
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--card-foreground);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  }
+
+  .app-header {
+    background: color-mix(in oklch, var(--card) 82%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .hero-banner {
+    background:
+      linear-gradient(120deg, color-mix(in oklch, var(--accent) 55%, var(--card)) 0%, var(--card) 65%);
+  }
+}
+
+/* Cards lift very slightly on hover */
+.surface-card,
+main section .bg-card.rounded-xl {
+  transition: box-shadow 200ms ease, transform 200ms ease, border-color 200ms ease;
+}
+@media (hover: hover) {
+  main section .bg-card.rounded-xl:hover {
+    box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.18);
+    border-color: color-mix(in oklch, var(--ring) 35%, var(--border));
+  }
+}
+
+/* Each page fades up gently when you switch tabs */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+main > div > section,
+.fade-up {
+  animation: fade-up 320ms ease-out both;
+}
+
+/* Gallery tiles stagger in */
+.gallery-tile {
+  animation: fade-up 360ms ease-out both;
+}
+
+/* Logo drifts slowly */
+@keyframes logo-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.logo-float {
+  animation: logo-float 6s ease-in-out infinite;
+}
+
+/* Nav buttons ease their background color */
+.nav-pill {
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

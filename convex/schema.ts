@@ -130,6 +130,13 @@ export default defineSchema({
       ),
     ),
   }).index("teamId", ["teamId"]).index("matchId", ["matchId"]).index("eventId", ["eventId"]).index("matchIdScoutUser", ["matchId", "scoutUserId"]),
+  galleryPhotos: defineTable({
+    eventId: v.optional(v.id("events")),
+    storageId: v.id("_storage"),
+    caption: v.optional(v.string()),
+    uploadedBy: v.id("users"),
+    createdAt: v.number(),
+  }).index("createdAt", ["createdAt"]),
   picklists: defineTable({
     eventId: v.id("events"),
     ownerUserId: v.id("users"),
