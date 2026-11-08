@@ -1,7 +1,8 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useAuthActions } from "@convex-dev/auth/react"
+import { ConvexError } from "convex/values"
 import { useAction, useConvexAuth, useConvexConnectionState, useMutation, useQuery } from "convex/react"
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
+import { AlertCircle, Eye, EyeOff, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
 import { ThemeModeMenu } from "@/components/theme-mode-menu"
@@ -208,6 +209,8 @@ function average(values: number[]) {
   return values.reduce((total, value) => total + value, 0) / values.length
 }
 
+// Usernames map to the same internal login as the original nickname system,
+// so everyone's existing account keeps working.
 function normalizeNickname(nickname: string) {
   return nickname
     .trim()
@@ -220,18 +223,28 @@ function nicknameToAuthEmail(nickname: string) {
   return `${normalizeNickname(nickname)}@scout.local`
 }
 
-function getCleanAuthError(error: unknown) {
+function getCleanAuthError(error: unknown, mode: "signIn" | "signUp") {
+  const code = error instanceof ConvexError ? String(error.data) : ""
   const message = error instanceof Error ? error.message.toLowerCase() : ""
+  if (code === "BAD_TEAM_CODE" || message.includes("bad_team_code")) {
+    return "That team code isn't right. Ask a mentor or lead scout for the current code."
+  }
+  if (code === "WEAK_PASSWORD" || message.includes("weak_password")) {
+    return "Pick a stronger password: at least 8 characters, and not something common like \"password1\"."
+  }
+  if (code === "BAD_USERNAME" || message.includes("bad_username")) {
+    return "Usernames are 3–24 letters or numbers."
+  }
   if (message.includes("already exists")) {
-    return "That nickname already exists. Switch to Sign in and use the same password."
+    return "That username is taken. If it's yours, switch to Sign in."
   }
-  if (message.includes("invalid password") || message.includes("invalid credentials")) {
-    return "Invalid nickname or password."
+  if (message.includes("too many") || message.includes("rate")) {
+    return "Too many tries. Wait a few minutes and try again."
   }
-  if (message.includes("email")) {
-    return "Invalid nickname."
+  if (message.includes("invalid password") || message.includes("invalid credentials") || message.includes("invalidaccountid") || message.includes("invalid account")) {
+    return "Wrong username or password."
   }
-  return "Could not sign in. Please try again."
+  return mode === "signUp" ? "Couldn't create the account. Check your connection and try again." : "Couldn't sign in. Check your connection and try again."
 }
 
 export function HomeRoute() {
@@ -278,6 +291,10 @@ export function HomeRoute() {
   const [authNickname, setAuthNickname] = useState("")
   const [authPassword, setAuthPassword] = useState("")
   const [authError, setAuthError] = useState("")
+  const [authConfirm, setAuthConfirm] = useState("")
+  const [authTeamCode, setAuthTeamCode] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+  const [authBusy, setAuthBusy] = useState(false)
   const [importError, setImportError] = useState("")
   const [importSuccess, setImportSuccess] = useState("")
   const [pitNotes, setPitNotes] = useState("")
@@ -612,26 +629,48 @@ export function HomeRoute() {
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (authBusy) return
     setAuthError("")
-    const nickname = authNickname.trim()
-    const normalizedNickname = normalizeNickname(nickname)
-    if (normalizedNickname.length < 2) {
-      setAuthError("Nickname must be at least 2 letters or numbers.")
+    const username = authNickname.trim()
+    const normalized = normalizeNickname(username)
+    if (normalized.length < 3 || normalized.length > 24) {
+      setAuthError("Usernames are 3–24 letters or numbers.")
       return
     }
     if (authPassword.length < 8) {
-      setAuthError("Invalid password.")
+      setAuthError(authMode === "signUp" ? "Passwords need at least 8 characters." : "Wrong username or password.")
       return
     }
+    if (authMode === "signUp") {
+      if (authPassword !== authConfirm) {
+        setAuthError("The two passwords don't match.")
+        return
+      }
+      if (authPassword.toLowerCase().includes(normalized)) {
+        setAuthError("Don't put your username in your password.")
+        return
+      }
+      if (!authTeamCode.trim()) {
+        setAuthError("Enter the team code from a mentor or lead scout.")
+        return
+      }
+    }
+    setAuthBusy(true)
     try {
       await signIn("password", {
         flow: authMode,
-        email: nicknameToAuthEmail(nickname),
-        name: nickname,
+        email: nicknameToAuthEmail(username),
+        name: username,
         password: authPassword,
+        ...(authMode === "signUp" ? { teamCode: authTeamCode.trim() } : {}),
       })
+      setAuthPassword("")
+      setAuthConfirm("")
+      setAuthTeamCode("")
     } catch (error) {
-      setAuthError(getCleanAuthError(error))
+      setAuthError(getCleanAuthError(error, authMode))
+    } finally {
+      setAuthBusy(false)
     }
   }
 
@@ -842,30 +881,108 @@ export function HomeRoute() {
                 <div className="text-sm font-semibold">Warriors of East Harlem</div>
               </div>
             </div>
-            <h1 className="mt-5 text-2xl font-semibold">Sign in to scout</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Create an account or sign in before viewing event data, teams, matches, or pick lists.</p>
-            <form className="mt-5 space-y-4" onSubmit={(event) => void handleAuthSubmit(event)}>
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant={authMode === "signIn" ? "default" : "outline"} onClick={() => setAuthMode("signIn")}>
-                  Sign in
-                </Button>
-                <Button type="button" variant={authMode === "signUp" ? "default" : "outline"} onClick={() => setAuthMode("signUp")}>
-                  Sign up
-                </Button>
-              </div>
+            <h1 className="mt-5 text-center text-2xl font-semibold">{authMode === "signIn" ? "Welcome back" : "Join the scouting team"}</h1>
+            <p className="mt-1 text-center text-sm text-muted-foreground">
+              {authMode === "signIn" ? "Sign in with your username and password." : "You'll need the team code from a mentor or lead scout."}
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-1 rounded-lg border bg-background p-1" role="tablist" aria-label="Sign in or create account">
+              {([
+                ["signIn", "Sign in"],
+                ["signUp", "Create account"],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="tab"
+                  aria-selected={authMode === mode}
+                  onClick={() => {
+                    setAuthMode(mode)
+                    setAuthError("")
+                  }}
+                  className={cn("nav-pill h-9 rounded-md text-sm font-medium", authMode === mode ? "bg-primary text-primary-foreground" : "hover:bg-muted")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <form className="mt-5 space-y-4" onSubmit={(event) => void handleAuthSubmit(event)} noValidate>
               <div className="space-y-2">
-                <Label htmlFor="authNickname">Nickname</Label>
-                <Input id="authNickname" value={authNickname} onChange={(event) => setAuthNickname(event.target.value)} autoComplete="username" required />
+                <Label htmlFor="authNickname">Username</Label>
+                <Input
+                  id="authNickname"
+                  className="h-11"
+                  value={authNickname}
+                  onChange={(event) => setAuthNickname(event.target.value)}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder="e.g. jayden"
+                  required
+                />
+                {authMode === "signUp" ? <p className="text-xs text-muted-foreground">3–24 letters or numbers. This is also the name your team sees.</p> : null}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="authPassword">Password</Label>
-                <Input id="authPassword" type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required minLength={8} />
+                <div className="relative">
+                  <Input
+                    id="authPassword"
+                    className="h-11 pr-11"
+                    type={showPassword ? "text" : "password"}
+                    value={authPassword}
+                    onChange={(event) => setAuthPassword(event.target.value)}
+                    autoComplete={authMode === "signIn" ? "current-password" : "new-password"}
+                    required
+                    minLength={8}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((value) => !value)}
+                    className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+                {authMode === "signUp" ? <p className="text-xs text-muted-foreground">At least 8 characters. A short phrase like "blue robot jumps" is easy to remember and hard to guess.</p> : null}
               </div>
-              {authError ? <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{authError}</div> : null}
-              <Button className="h-11 w-full" type="submit">
+              {authMode === "signUp" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="authConfirm">Confirm password</Label>
+                    <Input
+                      id="authConfirm"
+                      className="h-11"
+                      type={showPassword ? "text" : "password"}
+                      value={authConfirm}
+                      onChange={(event) => setAuthConfirm(event.target.value)}
+                      autoComplete="new-password"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="authTeamCode">Team code</Label>
+                    <Input
+                      id="authTeamCode"
+                      className="h-11"
+                      value={authTeamCode}
+                      onChange={(event) => setAuthTeamCode(event.target.value)}
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      required
+                    />
+                  </div>
+                </>
+              ) : null}
+              {authError ? <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{authError}</div> : null}
+              <Button className="h-11 w-full text-base" type="submit" disabled={authBusy}>
                 <LogIn className="size-4" />
-                {authMode === "signIn" ? "Sign in" : "Create account"}
+                {authBusy ? "One sec…" : authMode === "signIn" ? "Sign in" : "Create account"}
               </Button>
+              {authMode === "signIn" ? (
+                <p className="text-center text-xs text-muted-foreground">Forgot your password? Ask a mentor to remove your account in the Mentor tab, then create it again.</p>
+              ) : null}
             </form>
           </div>
         </div>
@@ -876,8 +993,9 @@ export function HomeRoute() {
   return (
     <main className="min-h-svh text-foreground">
       <div className="safe-area mx-auto flex min-h-svh w-full max-w-7xl flex-col gap-4 px-3 py-3 sm:px-6 sm:py-4">
-        <header className="app-header sticky top-3 z-40 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
+        <header className="app-header sticky top-2 z-40 rounded-xl border px-3 py-2.5 shadow-sm sm:px-4">
+          <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
             <img src={frc1880Logo} alt="Team 1880 logo" className="size-8 rounded-md object-contain" />
             <div className="leading-tight">
               <div className="text-sm font-semibold">1880 Scout</div>
@@ -887,13 +1005,16 @@ export function HomeRoute() {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <AppNav activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />
-
+          <div className="flex shrink-0 items-center gap-2">
+            <AppNav variant="mobile" activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />
             <ThemeModeMenu />
-            <Button variant="outline" size="sm" onClick={() => void signOut()}>
+            <Button variant="outline" size="sm" className="h-9" onClick={() => void signOut()}>
               Sign out
             </Button>
+          </div>
+          </div>
+          <div className="mt-2 hidden border-t pt-2 xl:block">
+            <AppNav variant="desktop" activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />
           </div>
         </header>
 
