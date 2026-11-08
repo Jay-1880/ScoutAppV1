@@ -22,7 +22,6 @@ const Gallery = lazy(() => import("@/components/gallery").then((module) => ({ de
 const DataTab = lazy(() => import("@/components/data-tab").then((module) => ({ default: module.DataTab })))
 const TeamDetailDialog = lazy(() => import("@/components/team-detail-dialog").then((module) => ({ default: module.TeamDetailDialog })))
 
-const STATBOTICS_CACHE_MS = 30 * 60 * 1000
 const MATCH_DRAFT_KEY = "1880-scout:match-draft"
 
 function readJson<T>(storage: Storage, key: string): T | null {
@@ -42,19 +41,6 @@ function writeJson(storage: Storage, key: string, value: unknown) {
   }
 }
 
-// Run async jobs a few at a time instead of firing 75 requests at once.
-async function mapWithLimit<T, R>(items: T[], limit: number, job: (item: T) => Promise<R>) {
-  const results: R[] = new Array(items.length)
-  let next = 0
-  async function worker() {
-    while (next < items.length) {
-      const index = next++
-      results[index] = await job(items[index])
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return results
-}
 import type { Id } from "../../convex/_generated/dataModel"
 
 // Grouped so scouts can scan them quickly during a match.
@@ -159,33 +145,7 @@ const columnLabels: Record<PickTier, string> = {
 }
 
 type UserRole = "mentor" | "lead_scout" | "pit" | "tech" | "scout"
-type StatboticsTeam = {
-  team?: number
-  norm_epa?: {
-    current?: number
-    recent?: number
-    mean?: number
-    max?: number
-  }
-  epa?: number
-  total_epa?: number
-  epa_end?: number
-  epa_pre_playoffs?: number
-  auto_epa?: number
-  teleop_epa?: number
-  endgame_epa?: number
-}
 
-function getStatboticsTotalEpa(data: StatboticsTeam) {
-  if (typeof data.total_epa === "number") return data.total_epa
-  if (typeof data.epa === "number") return data.epa
-  if (typeof data.epa_end === "number") return data.epa_end
-  if (typeof data.epa_pre_playoffs === "number") return data.epa_pre_playoffs
-  if (typeof data.auto_epa === "number" || typeof data.teleop_epa === "number" || typeof data.endgame_epa === "number") {
-    return (data.auto_epa ?? 0) + (data.teleop_epa ?? 0) + (data.endgame_epa ?? 0)
-  }
-  return null
-}
 
 const assignableRoles: UserRole[] = ["pit", "tech", "scout", "lead_scout"]
 const roleLabels: Record<UserRole | "admin" | "scouter", string> = {
@@ -346,7 +306,6 @@ export function HomeRoute() {
   const [roleOverrides, setRoleOverrides] = useState<Record<string, UserRole>>({})
   const [deletedProfileIds, setDeletedProfileIds] = useState<string[]>([])
   const [teamDetailOpen, setTeamDetailOpen] = useState(false)
-  const [statboticsEpaByTeamId, setStatboticsEpaByTeamId] = useState<Record<string, number | null>>({})
   const [selectedActivityUserId, setSelectedActivityUserId] = useState<string | null>(null)
   const bootstrappedProfileForUser = useRef<string | null>(null)
   const routedAfterLoginForUser = useRef<string | null>(null)
@@ -427,6 +386,20 @@ export function HomeRoute() {
       uncategorized: [],
     })
   }, [picklistSearch, teams])
+  // Statbotics EPA is fetched and cached on the server (convex/statbotics.ts),
+  // so phones download it once instead of hitting Statbotics for every team.
+  const statbotics = useQuery(api.statbotics.getCurrent)
+  const refreshStatbotics = useAction(api.statbotics.refresh)
+  const statboticsEpaByTeamId = useMemo(() => {
+    const byNumber = new Map((statbotics?.teams ?? []).map((stat) => [stat.team, stat.epa ?? null]))
+    return Object.fromEntries(teams.map((team) => [team._id, byNumber.get(team.teamNumber) ?? null])) as Record<string, number | null>
+  }, [statbotics, teams])
+  const activeEventKey = activeEvent?.eventKey
+  useEffect(() => {
+    // Asks the server for fresh numbers; it only refetches if they're stale.
+    if (activeEventKey) void refreshStatbotics({}).catch(() => {})
+  }, [activeEventKey, refreshStatbotics])
+
   const visibleTeamList = useMemo(() => {
     const query = teamSearch.trim().toLowerCase()
     const filtered = teams.filter((team) => {
@@ -475,50 +448,6 @@ export function HomeRoute() {
     }, {})
   }, [pitReports, reports, teams])
 
-  // Only refetch Statbotics when the event or its team list actually changes,
-  // not every time someone submits a report. Results are cached for 30 minutes.
-  const statboticsKey = `${activeEvent?.eventKey ?? ""}:${teams.map((team) => `${team._id}=${team.teamNumber}`).join(",")}`
-  useEffect(() => {
-    let cancelled = false
-    async function loadStatbotics() {
-      if (!teams.length) {
-        setStatboticsEpaByTeamId({})
-        return
-      }
-      const cacheKey = `1880-scout:epa:${statboticsKey}`
-      const cached = readJson<{ at: number; data: Record<string, number | null> }>(sessionStorage, cacheKey)
-      if (cached && Date.now() - cached.at < STATBOTICS_CACHE_MS) {
-        setStatboticsEpaByTeamId(cached.data)
-        return
-      }
-      const eventKey = activeEvent?.eventKey
-      const entries = await mapWithLimit(teams, 6, async (team) => {
-        try {
-          const endpoint = eventKey
-            ? `https://api.statbotics.io/v3/team/${team.teamNumber}/event/${eventKey}`
-            : `https://api.statbotics.io/v3/team/${team.teamNumber}`
-          const response = await fetch(endpoint)
-          if (!response.ok) {
-            return [team._id, null] as const
-          }
-          const data = (await response.json()) as StatboticsTeam
-          return [team._id, getStatboticsTotalEpa(data)] as const
-        } catch {
-          return [team._id, null] as const
-        }
-      })
-      if (!cancelled) {
-        const data = Object.fromEntries(entries)
-        setStatboticsEpaByTeamId(data)
-        writeJson(sessionStorage, cacheKey, { at: Date.now(), data })
-      }
-    }
-    void loadStatbotics()
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statboticsKey])
 
   useEffect(() => {
     if (activeEvent?._id && currentUser?.userId && canManagePicklist) {
@@ -568,6 +497,7 @@ export function HomeRoute() {
       })
       setTeamId(null)
       setImportSuccess(`Imported ${imported.data.teams.length} teams and ${imported.data.matches.length} qualification matches.`)
+      void refreshStatbotics({ force: true }).catch(() => {})
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Event import failed")
     } finally {

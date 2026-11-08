@@ -103,6 +103,12 @@ export async function buildTeamRows(ctx: QueryCtx, eventId: Id<"events">, includ
     const teams = await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", eventId)).collect()
     const reports = await ctx.db.query("matchReports").withIndex("eventId", (q) => q.eq("eventId", eventId)).collect()
     const pitReports = await ctx.db.query("pitReports").withIndex("eventId", (q) => q.eq("eventId", eventId)).collect()
+    // Public Statbotics EPA, cached by convex/statbotics.ts
+    const event = await ctx.db.get(eventId)
+    const statbotics = event
+      ? await ctx.db.query("statboticsCache").withIndex("eventKey", (q) => q.eq("eventKey", event.eventKey)).unique()
+      : null
+    const statsByTeam = new Map((statbotics?.teams ?? []).map((stat) => [stat.team, stat]))
 
     const reportsByTeam = new Map<string, Doc<"matchReports">[]>()
     for (const report of reports) {
@@ -151,6 +157,7 @@ export async function buildTeamRows(ctx: QueryCtx, eventId: Id<"events">, includ
                 .filter((note): note is string => Boolean(note))
                 .slice(-12)
             : [],
+          statbotics: statsByTeam.get(team.teamNumber) ?? null,
         }
       })
       .sort((a, b) => a.teamNumber - b.teamNumber)
