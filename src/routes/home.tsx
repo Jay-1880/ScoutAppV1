@@ -978,7 +978,7 @@ export function HomeRoute() {
         ) : null}
 
         {activeTab === "admin" ? (
-          <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <section className="grid gap-4">
             <div className="rounded-xl border bg-card p-4 shadow-sm">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <KeyRound className="size-4" />
@@ -994,11 +994,11 @@ export function HomeRoute() {
                   <Button type="submit">Unlock mentor</Button>
                 </form>
               ) : (
-                <div className="mt-4 rounded-lg border bg-background p-4 text-sm text-muted-foreground">Mentor key accepted. Event setup is available.</div>
+                <div className="mt-2 text-sm text-muted-foreground">You have mentor access: event setup, users, guest links and the activity log are below.</div>
               )}
             </div>
             {mentorUnlocked ? (
-              <div className="grid gap-4">
+              <div className="grid items-start gap-4 xl:grid-cols-2">
                 <form className="rounded-xl border bg-card p-4 shadow-sm" onSubmit={(event) => void handleSaveTbaApiKey(event)}>
                   <div className="flex items-center gap-2 text-sm font-semibold">
                     <KeyRound className="size-4" />
@@ -1041,7 +1041,7 @@ export function HomeRoute() {
                   </div>
                   <div className="mt-4 grid gap-2">
                     {profiles.length ? profiles.map((profile) => (
-                      <div key={profile._id} className="grid gap-2 rounded-lg border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                      <div key={profile._id} className="grid gap-2 rounded-lg border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                         <div>
                           <div className="text-sm font-semibold">{profile.displayName || "Unnamed scout"}</div>
                           <div className="text-xs text-muted-foreground">{roleLabels[roleOverrides[profile._id] ?? normalizeRole(profile.role)]}</div>
@@ -1321,7 +1321,7 @@ export function HomeRoute() {
         ) : null}
 
         {activeTab === "pitCrew" ? (
-          <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+          <section className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
             <form className="rounded-xl border bg-card p-4 shadow-sm" onSubmit={(event) => void handlePitCrewSubmit(event)}>
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Users className="size-4" />
@@ -1358,7 +1358,7 @@ export function HomeRoute() {
                   {openTechMessages.length ? openTechMessages.map((message) => {
                     const team = teams.find((item) => item._id === message.teamId)
                     return (
-                      <div key={message._id} className="grid gap-2 rounded-md border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                      <div key={message._id} className="grid gap-2 rounded-md border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                         <div>
                           <div className="text-sm font-medium">{team ? `${team.teamNumber} - ${team.nickname}` : "General pit note"}</div>
                           <div className="text-sm text-muted-foreground">{message.message}</div>
@@ -1375,7 +1375,7 @@ export function HomeRoute() {
                 <div className="text-sm font-semibold">Borrowed items</div>
                 <div className="mt-4 grid gap-2">
                   {openPitCrewItems.length ? openPitCrewItems.map((item) => (
-                    <div key={item._id} className="grid gap-3 rounded-lg border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div key={item._id} className="grid gap-3 rounded-lg border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                       <div>
                         <div className="text-sm font-semibold">{item.itemName}</div>
                         <div className="text-sm text-muted-foreground">{item.borrowerName} from {item.borrowerTeam}</div>
@@ -1396,7 +1396,7 @@ export function HomeRoute() {
 
         {activeTab === "matches" ? <section className="rounded-xl border bg-card p-4 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-semibold"><CalendarDays className="size-4" /> Match scouting</div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
             <div className="space-y-3">
               <div className="space-y-2">
                 <Label htmlFor="matchSelect">Match number</Label>
