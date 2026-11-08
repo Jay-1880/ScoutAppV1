@@ -1,31 +1,15 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { useState, type FormEvent, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router"
 import { useQuery } from "convex/react"
-import { ChevronDown, Clock3, Search, ShieldCheck } from "lucide-react"
+import { Clock3, ShieldCheck } from "lucide-react"
 
 import frc1880Logo from "@/assets/frc1880.png"
+import { ScoutingBoard } from "@/components/scouting-board"
 import { ThemeModeMenu } from "@/components/theme-mode-menu"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { endgameLabels, tagLabels } from "@/lib/types"
-import { cn } from "@/lib/utils"
 import { api } from "../../convex/_generated/api"
-
-const shotRangeLabels: Record<string, string> = {
-  close: "At the hub",
-  mid: "Set spots",
-  long: "Anywhere in zone",
-  none: "Doesn't shoot",
-}
-const climbLabels: Record<string, string> = { none: "Can't climb", l1: "Level 1", l2: "Level 2", l3: "Level 3" }
-const traverseLabels: Record<string, string> = { trench: "Trench", bump: "Bump", both: "Trench or bump", other: "Neither" }
-
-type SortKey = "number" | "rank" | "teleop" | "auto" | "climb"
-
-function fmt(value: number | null | undefined, digits = 1) {
-  return value == null ? "—" : value.toFixed(digits)
-}
 
 function GuestShell({ children }: { children: ReactNode }) {
   return (
@@ -85,23 +69,6 @@ export function GuestCodeEntry() {
 export function GuestRoute() {
   const { code = "" } = useParams()
   const data = useQuery(api.guest.getGuestData, { code })
-  const [search, setSearch] = useState("")
-  const [sort, setSort] = useState<SortKey>("teleop")
-  const [openTeam, setOpenTeam] = useState<number | null>(null)
-
-  const rows = useMemo(() => {
-    if (!data?.ok) return []
-    const query = search.trim().toLowerCase()
-    const filtered = data.teams.filter((team) => !query || `${team.teamNumber} ${team.nickname}`.toLowerCase().includes(query))
-    const num = (value: number | null) => value ?? -1
-    return [...filtered].sort((a, b) => {
-      if (sort === "rank") return (a.eventRank ?? 9999) - (b.eventRank ?? 9999)
-      if (sort === "teleop") return num(b.avgTeleopFuel) - num(a.avgTeleopFuel)
-      if (sort === "auto") return num(b.avgAutoFuel) - num(a.avgAutoFuel)
-      if (sort === "climb") return num(b.avgClimbPoints) - num(a.avgClimbPoints)
-      return a.teamNumber - b.teamNumber
-    })
-  }, [data, search, sort])
 
   if (data === undefined) {
     return (
@@ -143,115 +110,10 @@ export function GuestRoute() {
         </div>
       </section>
 
-      <section className="surface-card grid gap-2 p-3 sm:grid-cols-[1fr_auto] sm:p-4">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="h-10 pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search number or name" inputMode="search" aria-label="Search teams" />
-        </div>
-        <select
-          className="h-10 rounded-lg border bg-background px-2 text-base sm:text-sm"
-          value={sort}
-          onChange={(event) => setSort(event.target.value as SortKey)}
-          aria-label="Sort teams"
-        >
-          <option value="teleop">Sort: teleop fuel</option>
-          <option value="auto">Sort: auto fuel</option>
-          <option value="climb">Sort: climb points</option>
-          <option value="rank">Sort: event rank</option>
-          <option value="number">Sort: team number</option>
-        </select>
-      </section>
-
-      {rows.length === 0 ? (
-        <div className="surface-card p-6 text-center text-sm text-muted-foreground">No teams to show yet.</div>
+      {data.teams.length ? (
+        <ScoutingBoard teams={data.teams} />
       ) : (
-        <section className="surface-card divide-y overflow-hidden">
-          <div className="hidden grid-cols-[4.5rem_1fr_repeat(5,5.5rem)_1.5rem] gap-2 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
-            <span>Team</span>
-            <span />
-            <span className="text-right">Auto fuel</span>
-            <span className="text-right">Teleop fuel</span>
-            <span className="text-right">Climb pts</span>
-            <span className="text-right">Driver</span>
-            <span className="text-right">Reports</span>
-            <span />
-          </div>
-          {rows.map((team) => {
-            const open = openTeam === team.teamNumber
-            const topTags = Object.entries(team.tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 4)
-            return (
-              <div key={team.teamNumber}>
-                <button
-                  type="button"
-                  onClick={() => setOpenTeam(open ? null : team.teamNumber)}
-                  aria-expanded={open}
-                  className="grid w-full grid-cols-[4rem_1fr_1.5rem] items-center gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/50 md:grid-cols-[4.5rem_1fr_repeat(5,5.5rem)_1.5rem] md:px-4"
-                >
-                  <span className="text-lg font-semibold tabular-nums">{team.teamNumber}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{team.nickname}</span>
-                    <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground md:hidden">
-                      <span>Auto {fmt(team.avgAutoFuel)}</span>
-                      <span>Tele {fmt(team.avgTeleopFuel)}</span>
-                      <span>Climb {fmt(team.avgClimbPoints, 0)}</span>
-                      {team.eventRank ? <span>Rank {team.eventRank}</span> : null}
-                    </span>
-                    {team.eventRank ? <span className="hidden text-xs text-muted-foreground md:block">Rank {team.eventRank}</span> : null}
-                  </span>
-                  <span className="hidden text-right tabular-nums md:block">{fmt(team.avgAutoFuel)}</span>
-                  <span className="hidden text-right tabular-nums md:block">{fmt(team.avgTeleopFuel)}</span>
-                  <span className="hidden text-right tabular-nums md:block">{fmt(team.avgClimbPoints, 0)}</span>
-                  <span className="hidden text-right tabular-nums md:block">{fmt(team.avgDriver)}</span>
-                  <span className="hidden text-right tabular-nums md:block">{team.matchCount}</span>
-                  <ChevronDown className={cn("size-4 justify-self-end text-muted-foreground transition-transform", open && "rotate-180")} />
-                </button>
-                {open ? (
-                  <div className="grid gap-3 bg-muted/30 px-3 py-3 text-sm animate-in fade-in duration-200 md:grid-cols-2 md:px-4">
-                    <div className="grid gap-1.5">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">From matches ({team.matchCount})</div>
-                      <Row label="Usual endgame" value={team.usualClimb ? endgameLabels[team.usualClimb] ?? team.usualClimb : "—"} />
-                      <Row label="Climbed L1 in auto" value={team.autoClimbRate == null ? "—" : `${Math.round(team.autoClimbRate * 100)}% of matches`} />
-                      <Row label="Driver / defense" value={`${fmt(team.avgDriver)} / ${fmt(team.avgDefense)}`} />
-                      <Row label="Fouls per match" value={fmt(team.avgFouls)} />
-                      {topTags.length ? (
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          {topTags.map(([tag, count]) => (
-                            <span key={tag} className="rounded-full border bg-background px-2 py-0.5 text-xs">{tagLabels[tag] ?? tag} ×{count}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="grid gap-1.5">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">From the pits</div>
-                      {team.pit ? (
-                        <>
-                          <Row label="Scores from" value={team.pit.shotRange ? shotRangeLabels[team.pit.shotRange] : "—"} />
-                          <Row label="Shoots while driving" value={team.pit.shootOnMove ? "Yes" : "No"} />
-                          <Row label="Holds" value={team.pit.fuelCapacity != null ? `${team.pit.fuelCapacity} fuel` : "—"} />
-                          <Row label="Intake" value={[team.pit.groundIntake ? "Floor" : null, team.pit.humanPlayerIntake ? "Human player" : null].filter(Boolean).join(" + ") || "—"} />
-                          <Row label="Highest climb" value={climbLabels[team.pit.maxClimb] ?? "—"} />
-                          <Row label="Crosses via" value={traverseLabels[team.pit.traverse] ?? team.pit.traverse} />
-                          <Row label="Drivetrain" value={team.pit.drivetrain} />
-                        </>
-                      ) : (
-                        <div className="text-muted-foreground">Not pit scouted yet.</div>
-                      )}
-                    </div>
-                    {team.pit?.notes || team.notes.length ? (
-                      <div className="grid gap-1.5 md:col-span-2">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scout notes</div>
-                        {team.pit?.notes ? <p className="rounded-md bg-background px-3 py-2">{team.pit.notes}</p> : null}
-                        {team.notes.map((note, index) => (
-                          <p key={index} className="rounded-md bg-background px-3 py-2 text-muted-foreground">{note}</p>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            )
-          })}
-        </section>
+        <div className="surface-card p-6 text-center text-sm text-muted-foreground">No teams to show yet.</div>
       )}
 
       <p className="flex items-center justify-center gap-1.5 pb-2 text-center text-xs text-muted-foreground">
@@ -259,14 +121,5 @@ export function GuestRoute() {
         Read-only view shared by Team 1880. Please don't redistribute.
       </p>
     </GuestShell>
-  )
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-medium">{value}</span>
-    </div>
   )
 }

@@ -1,6 +1,6 @@
 import { getAuthUserId } from "@convex-dev/auth/server"
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server"
-import type { Doc } from "./_generated/dataModel"
+import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 
 // Guest passes let alliance partners view our scouting data read-only,
@@ -98,23 +98,11 @@ function avg(values: number[]) {
 
 const CLIMB_POINTS: Record<string, number> = { none: 0, low: 10, mid: 20, high: 30 }
 
-// Public on purpose (guests have no account); everything is gated by the code.
-export const getGuestData = query({
-  args: { code: v.string() },
-  handler: async (ctx, args) => {
-    const code = args.code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
-    if (code.length !== 10) return { ok: false as const, reason: "invalid" as const }
-    const pass = await ctx.db.query("guestPasses").withIndex("code", (q) => q.eq("code", code)).unique()
-    if (!pass) return { ok: false as const, reason: "invalid" as const }
-    if (pass.revoked) return { ok: false as const, reason: "revoked" as const }
-    if (pass.expiresAt < Date.now()) return { ok: false as const, reason: "expired" as const }
-
-    const event = await ctx.db.query("events").order("desc").first()
-    if (!event) return { ok: true as const, label: pass.label, expiresAt: pass.expiresAt, event: null, teams: [] }
-
-    const teams = await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
-    const reports = await ctx.db.query("matchReports").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
-    const pitReports = await ctx.db.query("pitReports").withIndex("eventId", (q) => q.eq("eventId", event._id)).collect()
+// Shared by the guest view and the team's own Data tab.
+export async function buildTeamRows(ctx: QueryCtx, eventId: Id<"events">, includeNotes: boolean) {
+    const teams = await ctx.db.query("teams").withIndex("eventId", (q) => q.eq("eventId", eventId)).collect()
+    const reports = await ctx.db.query("matchReports").withIndex("eventId", (q) => q.eq("eventId", eventId)).collect()
+    const pitReports = await ctx.db.query("pitReports").withIndex("eventId", (q) => q.eq("eventId", eventId)).collect()
 
     const reportsByTeam = new Map<string, Doc<"matchReports">[]>()
     for (const report of reports) {
@@ -154,10 +142,10 @@ export const getGuestData = query({
                 autoClimb: pit.autoClimb ?? null,
                 traverse: pit.traverse,
                 drivetrain: pit.drivetrain,
-                notes: pass.includeNotes ? pit.notes ?? null : null,
+                notes: includeNotes ? pit.notes ?? null : null,
               }
             : null,
-          notes: pass.includeNotes
+          notes: includeNotes
             ? teamReports
                 .flatMap((report) => [report.autoNotes, report.teleopNotes, report.endgameNotes])
                 .filter((note): note is string => Boolean(note))
@@ -167,6 +155,25 @@ export const getGuestData = query({
       })
       .sort((a, b) => a.teamNumber - b.teamNumber)
 
+    return teamRows
+}
+
+// Public on purpose (guests have no account); everything is gated by the code.
+export const getGuestData = query({
+  args: { code: v.string() },
+  handler: async (ctx, args) => {
+    const code = args.code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
+    if (code.length !== 10) return { ok: false as const, reason: "invalid" as const }
+    const pass = await ctx.db.query("guestPasses").withIndex("code", (q) => q.eq("code", code)).unique()
+    if (!pass) return { ok: false as const, reason: "invalid" as const }
+    if (pass.revoked) return { ok: false as const, reason: "revoked" as const }
+    if (pass.expiresAt < Date.now()) return { ok: false as const, reason: "expired" as const }
+
+    const event = await ctx.db.query("events").order("desc").first()
+    if (!event) return { ok: true as const, label: pass.label, expiresAt: pass.expiresAt, event: null, teams: [] }
+
+    const teamRows = await buildTeamRows(ctx, event._id, pass.includeNotes)
+
     return {
       ok: true as const,
       label: pass.label,
@@ -174,6 +181,25 @@ export const getGuestData = query({
       includeNotes: pass.includeNotes,
       event: { name: event.name, eventKey: event.eventKey },
       teams: teamRows,
+    }
+  },
+})
+
+// Same summaries for signed-in team members (Data tab). Includes notes.
+export const getTeamSummaries = query({
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx)
+    if (!userId) return null
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("userId", (q) => q.eq("userId", userId))
+      .unique()
+    if (!profile) return null
+    const event = await ctx.db.query("events").order("desc").first()
+    if (!event) return { event: null, teams: [] }
+    return {
+      event: { name: event.name, eventKey: event.eventKey },
+      teams: await buildTeamRows(ctx, event._id, true),
     }
   },
 })

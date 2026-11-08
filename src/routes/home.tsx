@@ -19,6 +19,7 @@ import { api } from "../../convex/_generated/api"
 
 // Loaded only when opened, so the first page load on phones is smaller.
 const Gallery = lazy(() => import("@/components/gallery").then((module) => ({ default: module.Gallery })))
+const DataTab = lazy(() => import("@/components/data-tab").then((module) => ({ default: module.DataTab })))
 const TeamDetailDialog = lazy(() => import("@/components/team-detail-dialog").then((module) => ({ default: module.TeamDetailDialog })))
 
 const STATBOTICS_CACHE_MS = 30 * 60 * 1000
@@ -533,6 +534,7 @@ export function HomeRoute() {
       isMentor ||
       activeTab === "dashboard" ||
       activeTab === "gallery" ||
+      activeTab === "data" ||
       (activeTab === "teams" && ["lead_scout", "pit", "tech", "scout"].includes(currentRole)) ||
       (activeTab === "pit" && ["lead_scout", "pit", "scout"].includes(currentRole)) ||
       (activeTab === "pitCrew" && ["lead_scout", "pit"].includes(currentRole)) ||
@@ -1610,6 +1612,12 @@ export function HomeRoute() {
             </div>
           </div>
         </section> : null}
+
+        {activeTab === "data" ? (
+          <Suspense fallback={<div className="surface-card h-40 animate-pulse" />}>
+            <DataTab />
+          </Suspense>
+        ) : null}
 
         {activeTab === "gallery" ? (
           <Suspense fallback={<div className="surface-card h-40 animate-pulse" />}>
