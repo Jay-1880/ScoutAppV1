@@ -1,4 +1,4 @@
-import { CalendarDays, ClipboardList, Home, KeyRound, ListChecks, Radar, Wrench } from "lucide-react"
+import { CalendarDays, ClipboardList, Home, Images, KeyRound, ListChecks, Radar, Wrench } from "lucide-react"
 
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
@@ -12,15 +12,16 @@ const navItems = [
   { label: "Match scouting", icon: CalendarDays, tab: "matches" },
   { label: "Pick list", icon: ListChecks, tab: "picklist" },
   { label: "Tech", icon: Wrench, tab: "tech" },
+  { label: "Gallery", icon: Images, tab: "gallery" },
   { label: "Mentor", icon: KeyRound, tab: "admin" },
 ]
 
-type AppTab = "dashboard" | "teams" | "pit" | "pitCrew" | "matches" | "picklist" | "tech" | "admin"
+type AppTab = "dashboard" | "teams" | "pit" | "pitCrew" | "matches" | "picklist" | "tech" | "gallery" | "admin"
 type UserRole = "mentor" | "lead_scout" | "pit" | "tech" | "scout"
 
 function canSeeTab(tab: AppTab, role: UserRole) {
   if (role === "mentor") return true
-  if (tab === "dashboard") return true
+  if (tab === "dashboard" || tab === "gallery") return true
   if (tab === "teams") return role === "lead_scout" || role === "pit" || role === "tech" || role === "scout"
   if (tab === "pit") return role === "pit" || role === "lead_scout" || role === "scout"
   if (tab === "pitCrew") return role === "pit" || role === "lead_scout"
@@ -50,7 +51,7 @@ export function AppNav({
             type="button"
             onClick={() => onTabChange(item.tab as AppTab)}
             className={cn(
-              "inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
+              "nav-pill inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
               activeTab === item.tab ? "bg-primary text-primary-foreground" : "hover:bg-accent hover:text-accent-foreground",
             )}
           >
