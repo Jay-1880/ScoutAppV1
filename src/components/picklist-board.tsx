@@ -18,7 +18,6 @@ const tierLabels: Record<PickTier, string> = {
   do_not_pick: "Do not pick",
   uncategorized: "Unsorted",
 }
-const tierShort: Record<PickTier, string> = { tier1: "T1", tier2: "T2", tier3: "T3", do_not_pick: "DNP", uncategorized: "—" }
 const tierAccent: Record<PickTier, string> = {
   tier1: "border-l-emerald-500",
   tier2: "border-l-sky-500",
@@ -136,33 +135,46 @@ export function PicklistBoard({ teams, eventId, canEdit }: { teams: PicklistTeam
     const problems = summary ? Object.entries(summary.tagCounts).reduce((sum, [tag, count]) => sum + (problemTags.has(tag) ? count : 0), 0) : 0
     const isUs = team.teamNumber === OUR_TEAM
     const ranked = tier !== "uncategorized" && tier !== "do_not_pick"
+    const editing = editingNote === team._id
     return (
       <div
         key={team._id}
-        draggable={canEdit && !isUs}
+        draggable={canEdit && !isUs && !editing}
         onDragStart={(event) => event.dataTransfer.setData("teamId", team._id)}
         className={cn(
-          "rounded-lg border border-l-4 bg-card p-2.5 text-sm shadow-sm transition-opacity",
+          "group rounded-lg border border-l-4 bg-card text-sm shadow-sm transition-opacity",
           tierAccent[tier],
           team.pickedByOther && "opacity-45",
         )}
       >
-        <div className="flex items-start gap-2">
-          {ranked ? <span className="mt-0.5 w-5 shrink-0 text-xs font-semibold text-muted-foreground tabular-nums">{index + 1}</span> : null}
+        <div className="flex items-stretch gap-2 p-2.5">
+          {ranked ? (
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums">{index + 1}</span>
+          ) : null}
           <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2">
-              <span className={cn("font-semibold tabular-nums", team.pickedByOther && "line-through")}>{team.teamNumber}</span>
-              <span className="truncate text-muted-foreground">{team.nickname}</span>
+            <div className="flex items-center gap-1.5">
+              <span className={cn("text-base font-semibold leading-tight tabular-nums", team.pickedByOther && "line-through")}>{team.teamNumber}</span>
               {isUs ? <span className="rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold text-primary">US</span> : null}
+              {problems ? <span className="text-xs text-destructive" title="Scouts flagged problems">⚠{problems}</span> : null}
             </div>
-            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-              <span>EPA <b className="font-semibold text-foreground">{fmt(summary?.statbotics?.epa)}</b></span>
-              <span>Ours <b className="font-semibold text-foreground">{fmt(estPoints(summary), 0)}</b></span>
-              {summary?.usualClimb ? <span>{endgameLabels[summary.usualClimb] ?? summary.usualClimb}</span> : null}
-              {team.eventRank ? <span>#{team.eventRank}</span> : null}
-              {problems ? <span className="text-destructive">⚠ {problems}</span> : null}
+            <div className="truncate text-xs text-muted-foreground" title={team.nickname}>{team.nickname}</div>
+            <div className="mt-1.5 grid grid-cols-3 gap-1 text-[11px] leading-tight">
+              <div className="rounded bg-muted/60 px-1.5 py-1">
+                <div className="text-muted-foreground">EPA</div>
+                <div className="font-semibold tabular-nums">{fmt(summary?.statbotics?.epa)}</div>
+              </div>
+              <div className="rounded bg-muted/60 px-1.5 py-1">
+                <div className="text-muted-foreground">Ours</div>
+                <div className="font-semibold tabular-nums">{fmt(estPoints(summary), 0)}</div>
+              </div>
+              <div className="rounded bg-muted/60 px-1.5 py-1">
+                <div className="text-muted-foreground">{team.eventRank ? "Rank" : "Climb"}</div>
+                <div className="truncate font-semibold tabular-nums">
+                  {team.eventRank ? `#${team.eventRank}` : summary?.usualClimb ? endgameLabels[summary.usualClimb] ?? "—" : "—"}
+                </div>
+              </div>
             </div>
-            {editingNote === team._id ? (
+            {editing ? (
               <form
                 className="mt-2 flex gap-1"
                 onSubmit={(event) => {
@@ -170,53 +182,59 @@ export function PicklistBoard({ teams, eventId, canEdit }: { teams: PicklistTeam
                   saveNote(team._id)
                 }}
               >
-                <Input autoFocus className="h-8 text-sm" value={noteDraft} maxLength={300} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Why here? e.g. great defense, fast climb" />
+                <Input autoFocus className="h-8 min-w-0 text-sm" value={noteDraft} maxLength={300} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Why here?" />
                 <Button type="submit" size="icon-sm" aria-label="Save note"><Check className="size-4" /></Button>
                 <Button type="button" size="icon-sm" variant="ghost" aria-label="Cancel" onClick={() => setEditingNote(null)}><X className="size-4" /></Button>
               </form>
             ) : team.pickNote ? (
-              <p className="mt-1.5 rounded bg-muted/60 px-2 py-1 text-xs">{team.pickNote}</p>
+              <p className="mt-1.5 line-clamp-2 rounded bg-muted/60 px-2 py-1 text-xs" title={team.pickNote}>{team.pickNote}</p>
             ) : null}
           </div>
           {selectionMode && canEdit && !isUs ? (
             <Button
               type="button"
               size="sm"
-              variant={team.pickedByOther ? "secondary" : "outline"}
-              className="shrink-0"
+              variant={team.pickedByOther ? "secondary" : "default"}
+              className="shrink-0 self-center"
               onClick={() => run(setPicked({ teamId: team._id, picked: !team.pickedByOther }))}
             >
               {team.pickedByOther ? "Undo" : "Picked"}
             </Button>
+          ) : canEdit && ranked ? (
+            <div className="flex shrink-0 flex-col justify-center gap-0.5">
+              <Button type="button" size="icon-xs" variant="ghost" aria-label="Move up" disabled={index === 0} onClick={() => move(tier, index, -1)}><ArrowUp className="size-3.5" /></Button>
+              <Button type="button" size="icon-xs" variant="ghost" aria-label="Move down" disabled={index === grouped[tier].length - 1} onClick={() => move(tier, index, 1)}><ArrowDown className="size-3.5" /></Button>
+            </div>
           ) : null}
         </div>
-        {canEdit && !selectionMode ? (
-          <div className="mt-2 flex flex-wrap items-center gap-1">
-            {ranked ? (
-              <>
-                <Button type="button" size="icon-sm" variant="ghost" aria-label="Move up" disabled={index === 0} onClick={() => move(tier, index, -1)}><ArrowUp className="size-4" /></Button>
-                <Button type="button" size="icon-sm" variant="ghost" aria-label="Move down" onClick={() => move(tier, index, 1)}><ArrowDown className="size-4" /></Button>
-              </>
-            ) : null}
-            <div className="ml-auto flex flex-wrap gap-1">
+        {canEdit && !selectionMode && !editing ? (
+          <div className="flex items-center gap-1 border-t px-2.5 py-1.5">
+            <select
+              className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs"
+              value=""
+              aria-label={`Move ${team.teamNumber} to another tier`}
+              onChange={(event) => {
+                if (event.target.value) run(setTier({ teamId: team._id, pickTier: event.target.value as PickTier }))
+              }}
+            >
+              <option value="">Move to…</option>
               {([...tiers, "uncategorized"] as PickTier[]).filter((target) => target !== tier).map((target) => (
-                <Button key={target} type="button" size="xs" variant="outline" className="min-w-9" onClick={() => run(setTier({ teamId: team._id, pickTier: target }))}>
-                  {target === "uncategorized" ? "Unsort" : tierShort[target]}
-                </Button>
+                <option key={target} value={target}>{tierLabels[target]}</option>
               ))}
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Edit note"
-                onClick={() => {
-                  setEditingNote(team._id)
-                  setNoteDraft(team.pickNote ?? "")
-                }}
-              >
-                <Pencil className="size-3" />
-              </Button>
-            </div>
+            </select>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label={team.pickNote ? "Edit note" : "Add note"}
+              title={team.pickNote ? "Edit note" : "Add note"}
+              onClick={() => {
+                setEditingNote(team._id)
+                setNoteDraft(team.pickNote ?? "")
+              }}
+            >
+              <Pencil className="size-3.5" />
+            </Button>
           </div>
         ) : null}
       </div>
@@ -237,8 +255,8 @@ export function PicklistBoard({ teams, eventId, canEdit }: { teams: PicklistTeam
           if (canEdit && teamId) run(setTier({ teamId: teamId as Id<"teams">, pickTier: tier }))
         }}
       >
-        <div className="mb-2 flex items-center justify-between gap-2 px-1">
-          <div className="text-sm font-semibold">
+        <div className="sticky top-0 z-10 -mx-2.5 -mt-2.5 mb-2 flex items-center justify-between gap-2 rounded-t-xl bg-background/95 px-3.5 py-2 backdrop-blur">
+          <div className="whitespace-nowrap text-sm font-semibold">
             {tierLabels[tier]} <span className="font-normal text-muted-foreground">{list.length}</span>
           </div>
           {canEdit && ranked && list.length > 1 && !selectionMode ? (
@@ -361,10 +379,10 @@ export function PicklistBoard({ teams, eventId, canEdit }: { teams: PicklistTeam
       </div>
 
       {/* Laptops: unsorted pool on the left, tiers side by side */}
-      <div className="hidden gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,3fr)]">
-        {renderColumn("uncategorized", "max-h-[calc(100svh-14rem)] overflow-y-auto")}
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          {tiers.map((tier) => renderColumn(tier, "max-h-[calc(100svh-14rem)] overflow-y-auto"))}
+      <div className="hidden gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        {renderColumn("uncategorized", "scroll-thin max-h-[calc(100svh-14rem)] overflow-y-auto")}
+        <div className="grid grid-cols-2 content-start gap-3">
+          {tiers.map((tier) => renderColumn(tier, "scroll-thin max-h-[26rem] overflow-y-auto"))}
         </div>
       </div>
     </section>

@@ -246,7 +246,7 @@ export function ScoutingBoard({ teams, showNotes = true }: { teams: TeamSummary[
                     </span>
                     <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
                   </div>
-                  <div className="grid grid-cols-5 gap-3">
+                  <div className="grid grid-cols-3 gap-x-3 gap-y-2 sm:grid-cols-5">
                     <Stat label="EPA" value={fmt(team.statbotics?.epa ?? null)} raw={team.statbotics?.epa ?? null} max={maxes.epa} />
                     <Stat label="Auto" value={fmt(team.avgAutoFuel)} raw={team.avgAutoFuel} max={maxes.auto} />
                     <Stat label="Teleop" value={fmt(team.avgTeleopFuel)} raw={team.avgTeleopFuel} max={maxes.teleop} />
