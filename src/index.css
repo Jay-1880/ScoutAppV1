@@ -195,3 +195,38 @@ main > div > section,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ------------------------------------------------------------------
+   Phone & laptop comfort
+   ------------------------------------------------------------------ */
+
+/* Respect notches and home bars on phones */
+.safe-area {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+/* No double-tap zoom or grey flash when tapping buttons quickly in the stands */
+button,
+[role="button"],
+label,
+select,
+input,
+textarea {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Visible keyboard focus on laptops */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Long lists scroll smoothly on phones */
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}

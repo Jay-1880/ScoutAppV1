@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { useAuthActions } from "@convex-dev/auth/react"
-import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react"
+import { useAction, useConvexAuth, useConvexConnectionState, useMutation, useQuery } from "convex/react"
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronRight, Clock3, Download, ImagePlus, KeyRound, LogIn, MapPin, Send, ShieldAlert, Sparkles, Trash2, Trophy, Users, Wrench } from "lucide-react"
 
 import { AppNav } from "@/components/app-nav"
-import { Gallery } from "@/components/gallery"
-import { TeamDetailDialog } from "@/components/team-detail-dialog"
 import { ThemeModeMenu } from "@/components/theme-mode-menu"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -17,6 +15,44 @@ import type { MatchEndgameResult, MatchTag, PickTier } from "@/lib/types"
 import { useUiStore } from "@/stores/ui-store"
 import frc1880Logo from "@/assets/frc1880.png"
 import { api } from "../../convex/_generated/api"
+
+// Loaded only when opened, so the first page load on phones is smaller.
+const Gallery = lazy(() => import("@/components/gallery").then((module) => ({ default: module.Gallery })))
+const TeamDetailDialog = lazy(() => import("@/components/team-detail-dialog").then((module) => ({ default: module.TeamDetailDialog })))
+
+const STATBOTICS_CACHE_MS = 30 * 60 * 1000
+const MATCH_DRAFT_KEY = "1880-scout:match-draft"
+
+function readJson<T>(storage: Storage, key: string): T | null {
+  try {
+    const raw = storage.getItem(key)
+    return raw ? (JSON.parse(raw) as T) : null
+  } catch {
+    return null
+  }
+}
+
+function writeJson(storage: Storage, key: string, value: unknown) {
+  try {
+    storage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Storage can be full or blocked (private mode); the app still works without it.
+  }
+}
+
+// Run async jobs a few at a time instead of firing 75 requests at once.
+async function mapWithLimit<T, R>(items: T[], limit: number, job: (item: T) => Promise<R>) {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  async function worker() {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await job(items[index])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
 import type { Id } from "../../convex/_generated/dataModel"
 
 const tags: MatchTag[] = ["fast", "accurate", "good_driver", "plays_defense", "tippy", "broke_down", "inconsistent"]
@@ -128,6 +164,17 @@ export function HomeRoute() {
   const createPitCrewItem = useMutation(api.scouting.createPitCrewItem)
   const markPitCrewItemReturned = useMutation(api.scouting.markPitCrewItemReturned)
   const { signIn, signOut } = useAuthActions()
+  const connection = useConvexConnectionState()
+  // Only warn after a short grace period so quick blips don't flash a banner.
+  const [showOffline, setShowOffline] = useState(false)
+  useEffect(() => {
+    if (connection.isWebSocketConnected) {
+      setShowOffline(false)
+      return
+    }
+    const timer = window.setTimeout(() => setShowOffline(true), 4000)
+    return () => window.clearTimeout(timer)
+  }, [connection.isWebSocketConnected])
   const activeTab = useUiStore((state) => state.activeTab)
   const setActiveTab = useUiStore((state) => state.setActiveTab)
   const [teamId, setTeamId] = useState<string | null>(null)
@@ -175,6 +222,10 @@ export function HomeRoute() {
   const [picklistSearch, setPicklistSearch] = useState("")
   const [techMessage, setTechMessage] = useState("")
   const [techStatus, setTechStatus] = useState("")
+  const [matchSubmitting, setMatchSubmitting] = useState(false)
+  const [matchStatus, setMatchStatus] = useState<{ kind: "ok" | "error"; text: string } | null>(null)
+  const [pitSubmitting, setPitSubmitting] = useState(false)
+  const matchDraftLoaded = useRef(false)
   const [roleOverrides, setRoleOverrides] = useState<Record<string, UserRole>>({})
   const [deletedProfileIds, setDeletedProfileIds] = useState<string[]>([])
   const [teamDetailOpen, setTeamDetailOpen] = useState(false)
@@ -288,6 +339,9 @@ export function HomeRoute() {
     }, {})
   }, [pitReports, reports, teams])
 
+  // Only refetch Statbotics when the event or its team list actually changes,
+  // not every time someone submits a report. Results are cached for 30 minutes.
+  const statboticsKey = `${activeEvent?.eventKey ?? ""}:${teams.map((team) => `${team._id}=${team.teamNumber}`).join(",")}`
   useEffect(() => {
     let cancelled = false
     async function loadStatbotics() {
@@ -295,33 +349,40 @@ export function HomeRoute() {
         setStatboticsEpaByTeamId({})
         return
       }
+      const cacheKey = `1880-scout:epa:${statboticsKey}`
+      const cached = readJson<{ at: number; data: Record<string, number | null> }>(sessionStorage, cacheKey)
+      if (cached && Date.now() - cached.at < STATBOTICS_CACHE_MS) {
+        setStatboticsEpaByTeamId(cached.data)
+        return
+      }
       const eventKey = activeEvent?.eventKey
-      const entries = await Promise.all(
-        teams.map(async (team) => {
-          try {
-            const endpoint = eventKey
-              ? `https://api.statbotics.io/v3/team/${team.teamNumber}/event/${eventKey}`
-              : `https://api.statbotics.io/v3/team/${team.teamNumber}`
-            const response = await fetch(endpoint)
-            if (!response.ok) {
-              return [team._id, null] as const
-            }
-            const data = (await response.json()) as StatboticsTeam
-            return [team._id, getStatboticsTotalEpa(data)] as const
-          } catch {
+      const entries = await mapWithLimit(teams, 6, async (team) => {
+        try {
+          const endpoint = eventKey
+            ? `https://api.statbotics.io/v3/team/${team.teamNumber}/event/${eventKey}`
+            : `https://api.statbotics.io/v3/team/${team.teamNumber}`
+          const response = await fetch(endpoint)
+          if (!response.ok) {
             return [team._id, null] as const
           }
-        }),
-      )
+          const data = (await response.json()) as StatboticsTeam
+          return [team._id, getStatboticsTotalEpa(data)] as const
+        } catch {
+          return [team._id, null] as const
+        }
+      })
       if (!cancelled) {
-        setStatboticsEpaByTeamId(Object.fromEntries(entries))
+        const data = Object.fromEntries(entries)
+        setStatboticsEpaByTeamId(data)
+        writeJson(sessionStorage, cacheKey, { at: Date.now(), data })
       }
     }
     void loadStatbotics()
     return () => {
       cancelled = true
     }
-  }, [activeEvent?.eventKey, teams])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statboticsKey])
 
   useEffect(() => {
     if (activeEvent?._id && currentUser?.userId && canManagePicklist) {
@@ -458,8 +519,9 @@ export function HomeRoute() {
   }
 
   async function handlePitSubmit() {
-    if (!selectedPitTeam) return
+    if (!selectedPitTeam || pitSubmitting) return
     setPitMessage("")
+    setPitSubmitting(true)
     try {
       const photoIds = await Promise.all(
         pitPhotos.map(async (photo) => {
@@ -503,6 +565,8 @@ export function HomeRoute() {
       setPitMessage("Pit report submitted. That team is off the unscouted list.")
     } catch (error) {
       setPitMessage(error instanceof Error ? error.message : "Could not save pit report.")
+    } finally {
+      setPitSubmitting(false)
     }
   }
 
@@ -550,27 +614,87 @@ export function HomeRoute() {
     }
   }
 
-  async function handleMatchSubmit() {
-    if (!selectedMatch || !selectedMatchTeam) return
-    await saveMatchReport({
-      matchId: selectedMatch._id,
-      teamId: selectedMatchTeam._id,
-      autoBallsScored: autoBalls,
-      teleopBallsScored: teleopBalls,
-      autoNotes: autoNotes || undefined,
-      teleopNotes: teleopNotes || undefined,
-      endgameResult: matchEndgame,
-      endgameNotes: endgameNotes || undefined,
-      driverRating,
-      defenseRating,
-      tags: matchTags,
+  // Keep the in-progress match form on the phone so a refresh, a dead battery
+  // or a dropped connection never loses a report mid-match.
+  useEffect(() => {
+    if (matchDraftLoaded.current) return
+    matchDraftLoaded.current = true
+    const draft = readJson<{
+      matchId?: string; matchTeamId?: string; autoBalls?: number; teleopBalls?: number
+      autoNotes?: string; teleopNotes?: string; endgameNotes?: string; driverRating?: number
+      defenseRating?: number; matchEndgame?: MatchEndgameResult; matchTags?: MatchTag[]
+    }>(localStorage, MATCH_DRAFT_KEY)
+    if (!draft) return
+    if (draft.matchId) setMatchId(draft.matchId)
+    if (draft.matchTeamId) setMatchTeamId(draft.matchTeamId)
+    setAutoBalls(draft.autoBalls ?? 0)
+    setTeleopBalls(draft.teleopBalls ?? 0)
+    setAutoNotes(draft.autoNotes ?? "")
+    setTeleopNotes(draft.teleopNotes ?? "")
+    setEndgameNotes(draft.endgameNotes ?? "")
+    setDriverRating(draft.driverRating ?? 5)
+    setDefenseRating(draft.defenseRating ?? 5)
+    setMatchEndgame(draft.matchEndgame ?? "none")
+    setMatchTags(draft.matchTags ?? [])
+  }, [])
+
+  useEffect(() => {
+    if (!matchDraftLoaded.current) return
+    writeJson(localStorage, MATCH_DRAFT_KEY, {
+      matchId, matchTeamId, autoBalls, teleopBalls, autoNotes, teleopNotes,
+      endgameNotes, driverRating, defenseRating, matchEndgame, matchTags,
     })
-    setAutoBalls(0)
-    setTeleopBalls(0)
-    setAutoNotes("")
-    setTeleopNotes("")
-    setEndgameNotes("")
-    setMatchTags([])
+  }, [matchId, matchTeamId, autoBalls, teleopBalls, autoNotes, teleopNotes, endgameNotes, driverRating, defenseRating, matchEndgame, matchTags])
+
+  async function handleMatchSubmit() {
+    if (!selectedMatch || !selectedMatchTeam || matchSubmitting) return
+    setMatchSubmitting(true)
+    setMatchStatus(null)
+    try {
+      await saveMatchReport({
+        matchId: selectedMatch._id,
+        teamId: selectedMatchTeam._id,
+        autoBallsScored: autoBalls,
+        teleopBallsScored: teleopBalls,
+        autoNotes: autoNotes || undefined,
+        teleopNotes: teleopNotes || undefined,
+        endgameResult: matchEndgame,
+        endgameNotes: endgameNotes || undefined,
+        driverRating,
+        defenseRating,
+        tags: matchTags,
+      })
+      setMatchStatus({ kind: "ok", text: `Saved team ${selectedMatchTeam.teamNumber} in Qual ${selectedMatch.matchNumber}.` })
+      setAutoBalls(0)
+      setTeleopBalls(0)
+      setAutoNotes("")
+      setTeleopNotes("")
+      setEndgameNotes("")
+      setMatchEndgame("none")
+      setDriverRating(5)
+      setDefenseRating(5)
+      setMatchTags([])
+      // Jump to the next match so the scout is ready for it.
+      const nextMatch = matches
+        .filter((match) => match.matchNumber > selectedMatch.matchNumber)
+        .sort((a, b) => a.matchNumber - b.matchNumber)[0]
+      if (nextMatch) {
+        // Stay on the same driver station (e.g. Red 2) for the next match.
+        const station = [...selectedMatch.redTeamNumbers, ...selectedMatch.blueTeamNumbers].indexOf(selectedMatchTeam.teamNumber)
+        const nextNumber = [...nextMatch.redTeamNumbers, ...nextMatch.blueTeamNumbers][station]
+        const nextTeam = teams.find((team) => team.teamNumber === nextNumber)
+        setMatchId(nextMatch._id)
+        setMatchTeamId(nextTeam?._id ?? "")
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message.replace(/^.*Uncaught Error:\s*/, "").split("\n")[0] : ""
+      setMatchStatus({
+        kind: "error",
+        text: `Not saved yet: ${message || "connection problem"}. Your answers are kept on this phone, so try again in a moment.`,
+      })
+    } finally {
+      setMatchSubmitting(false)
+    }
   }
 
   function step(setter: (value: number) => void, value: number, delta: number, min = 0, max = 99) {
@@ -579,7 +703,7 @@ export function HomeRoute() {
 
   if (!isSignedIn) {
     return (
-      <main className="min-h-svh bg-background px-4 py-6 text-foreground">
+      <main className="safe-area min-h-svh px-4 py-6 text-foreground">
         <div className="mx-auto flex min-h-[calc(100svh-3rem)] w-full max-w-md flex-col justify-center">
           <div className="surface-card fade-up p-5">
             <div className="flex flex-col items-center gap-3 text-center">
@@ -621,8 +745,8 @@ export function HomeRoute() {
   }
 
   return (
-    <main className="min-h-svh bg-background text-foreground">
-      <div className="mx-auto flex min-h-svh w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6">
+    <main className="min-h-svh text-foreground">
+      <div className="safe-area mx-auto flex min-h-svh w-full max-w-7xl flex-col gap-4 px-3 py-3 sm:px-6 sm:py-4">
         <header className="app-header sticky top-3 z-40 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 shadow-sm">
           <div className="flex items-center gap-2">
             <img src={frc1880Logo} alt="Team 1880 logo" className="size-8 rounded-md object-contain" />
@@ -634,18 +758,22 @@ export function HomeRoute() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <AppNav activeTab={activeTab} onTabChange={setActiveTab} role={currentRole} />
-            <div className="hidden items-center gap-2 rounded-md border bg-background px-2 py-1 sm:flex">
-              <img src={frc1880Logo} alt="Team 1880 logo" className="size-7 rounded-sm object-contain" />
-              <span className="text-sm font-semibold">Team 1880</span>
-            </div>
+
             <ThemeModeMenu />
             <Button variant="outline" size="sm" onClick={() => void signOut()}>
               Sign out
             </Button>
           </div>
         </header>
+
+        {showOffline ? (
+          <div role="status" className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+            <AlertCircle className="size-4 shrink-0" />
+            No connection right now. Keep scouting: your match form is saved on this phone, and anything you submit will send once you're back online.
+          </div>
+        ) : null}
 
         {activeTab === "dashboard" ? (
           <section className="grid gap-4">
@@ -754,7 +882,7 @@ export function HomeRoute() {
                         </div>
                         <div className="flex flex-wrap gap-2 sm:justify-end">
                           <select
-                            className="h-10 rounded-md border bg-card px-3 text-sm"
+                            className="h-10 rounded-md border bg-card px-3 text-base sm:text-sm"
                             value={roleOverrides[profile._id] ?? normalizeRole(profile.role)}
                             onChange={(event) => void handleAssignRole(profile._id, event.target.value as UserRole)}
                           >
@@ -861,7 +989,7 @@ export function HomeRoute() {
                 <Label htmlFor="pitTeamSelect">Unscouted team</Label>
                 <select
                   id="pitTeamSelect"
-                  className="h-12 w-full rounded-md border bg-background px-3 text-sm"
+                  className="h-12 w-full rounded-md border bg-background px-3 text-base sm:text-sm"
                   value={selectedPitTeam?._id ?? ""}
                   onChange={(event) => setPitTeamId(event.target.value)}
                   disabled={!canUsePit || !unscoutedTeams.length}
@@ -919,7 +1047,7 @@ export function HomeRoute() {
                 ) : null}
               </div>
               {pitMessage ? <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">{pitMessage}</div> : null}
-              <Button className="w-full" onClick={() => void handlePitSubmit()} disabled={!canUsePit || !selectedPitTeam}>Submit pit scouting</Button>
+              <Button className="h-12 w-full text-base" onClick={() => void handlePitSubmit()} disabled={!canUsePit || !selectedPitTeam || pitSubmitting}>{pitSubmitting ? "Saving…" : "Submit pit scouting"}</Button>
             </div>
           </section>
         ) : null}
@@ -1006,7 +1134,7 @@ export function HomeRoute() {
                 <Label htmlFor="matchSelect">Match number</Label>
                 <select
                   id="matchSelect"
-                  className="h-12 w-full rounded-md border bg-background px-3 text-sm"
+                  className="h-12 w-full rounded-md border bg-background px-3 text-base sm:text-sm"
                   value={selectedMatch?._id ?? ""}
                   onChange={(event) => setMatchId(event.target.value)}
                 >
@@ -1019,7 +1147,7 @@ export function HomeRoute() {
                 <Label htmlFor="robotSelect">Team in this match</Label>
                 <select
                   id="robotSelect"
-                  className="h-12 w-full rounded-md border bg-background px-3 text-sm"
+                  className="h-12 w-full rounded-md border bg-background px-3 text-base sm:text-sm"
                   value={selectedMatchTeam?._id ?? ""}
                   onChange={(event) => setMatchTeamId(event.target.value)}
                 >
@@ -1037,10 +1165,10 @@ export function HomeRoute() {
               ].map(([label, value, setter]) => (
                 <div key={label as string} className="rounded-lg border p-4">
                   <div className="text-sm font-medium">{label as string}</div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => step(setter as (value: number) => void, value as number, -1)}>-</Button>
-                    <div className="min-w-10 text-center text-lg font-semibold">{value as number}</div>
-                    <Button variant="outline" size="sm" onClick={() => step(setter as (value: number) => void, value as number, 1)}>+</Button>
+                  <div className="mt-3 grid grid-cols-[3.5rem_1fr_3.5rem] items-center gap-2">
+                    <Button variant="outline" className="h-14 text-2xl" aria-label={`${label as string} minus one`} onClick={() => step(setter as (value: number) => void, value as number, -1)}>−</Button>
+                    <div className="text-center text-3xl font-semibold tabular-nums">{value as number}</div>
+                    <Button className="h-14 text-2xl" aria-label={`${label as string} plus one`} onClick={() => step(setter as (value: number) => void, value as number, 1)}>+</Button>
                   </div>
                 </div>
               ))}
@@ -1049,24 +1177,24 @@ export function HomeRoute() {
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <div className="rounded-lg border p-3">
                     <div className="text-xs text-muted-foreground">Driver</div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => step(setDriverRating, driverRating, -1, 1, 10)}>-</Button>
-                      <div className="min-w-10 text-center font-semibold">{driverRating}/10</div>
-                      <Button variant="outline" size="sm" onClick={() => step(setDriverRating, driverRating, 1, 1, 10)}>+</Button>
+                    <div className="mt-2 grid grid-cols-[2.75rem_1fr_2.75rem] items-center gap-1">
+                      <Button variant="outline" className="h-11 text-xl" aria-label="Driver rating down" onClick={() => step(setDriverRating, driverRating, -1, 1, 10)}>−</Button>
+                      <div className="text-center text-lg font-semibold tabular-nums">{driverRating}/10</div>
+                      <Button variant="outline" className="h-11 text-xl" aria-label="Driver rating up" onClick={() => step(setDriverRating, driverRating, 1, 1, 10)}>+</Button>
                     </div>
                   </div>
                   <div className="rounded-lg border p-3">
                     <div className="text-xs text-muted-foreground">Defense</div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => step(setDefenseRating, defenseRating, -1, 1, 10)}>-</Button>
-                      <div className="min-w-10 text-center font-semibold">{defenseRating}/10</div>
-                      <Button variant="outline" size="sm" onClick={() => step(setDefenseRating, defenseRating, 1, 1, 10)}>+</Button>
+                    <div className="mt-2 grid grid-cols-[2.75rem_1fr_2.75rem] items-center gap-1">
+                      <Button variant="outline" className="h-11 text-xl" aria-label="Defense rating down" onClick={() => step(setDefenseRating, defenseRating, -1, 1, 10)}>−</Button>
+                      <div className="text-center text-lg font-semibold tabular-nums">{defenseRating}/10</div>
+                      <Button variant="outline" className="h-11 text-xl" aria-label="Defense rating up" onClick={() => step(setDefenseRating, defenseRating, 1, 1, 10)}>+</Button>
                     </div>
                   </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   {(["none", "low", "mid", "high"] as MatchEndgameResult[]).map((result) => (
-                    <Button key={result} variant={matchEndgame === result ? "default" : "outline"} onClick={() => setMatchEndgame(result)} className="capitalize">
+                    <Button key={result} variant={matchEndgame === result ? "default" : "outline"} onClick={() => setMatchEndgame(result)} className="h-11 capitalize">
                       {result} climb
                     </Button>
                   ))}
@@ -1075,7 +1203,7 @@ export function HomeRoute() {
                   {tags.map((tag) => (
                     <label key={tag} className="flex items-center gap-3 rounded-lg border p-3">
                       <Checkbox checked={matchTags.includes(tag)} onCheckedChange={(checked) => setMatchTags((current) => checked ? [...current, tag] : current.filter((item) => item !== tag))} />
-                      <span className="text-sm">{tag.replaceAll("_", " ")}</span>
+                      <span className="text-sm capitalize">{tag.replaceAll("_", " ")}</span>
                     </label>
                   ))}
                 </div>
@@ -1084,15 +1212,32 @@ export function HomeRoute() {
                   <Textarea value={teleopNotes} onChange={(event) => setTeleopNotes(event.target.value)} placeholder="Teleop notes" />
                   <Textarea value={endgameNotes} onChange={(event) => setEndgameNotes(event.target.value)} placeholder="Endgame notes" />
                 </div>
-                <Button className="mt-3 w-full" onClick={() => void handleMatchSubmit()} disabled={!selectedMatch || !selectedMatchTeam}>
-                  Submit match report
+                {matchStatus ? (
+                  <div
+                    role="status"
+                    className={cn(
+                      "mt-3 rounded-lg border p-3 text-sm",
+                      matchStatus.kind === "ok"
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : "border-destructive/40 bg-destructive/10 text-destructive",
+                    )}
+                  >
+                    {matchStatus.text}
+                  </div>
+                ) : null}
+                <Button className="mt-3 h-12 w-full text-base" onClick={() => void handleMatchSubmit()} disabled={!selectedMatch || !selectedMatchTeam || matchSubmitting}>
+                  {matchSubmitting ? "Saving…" : "Submit match report"}
                 </Button>
               </div>
             </div>
           </div>
         </section> : null}
 
-        {activeTab === "gallery" ? <Gallery /> : null}
+        {activeTab === "gallery" ? (
+          <Suspense fallback={<div className="surface-card h-40 animate-pulse" />}>
+            <Gallery />
+          </Suspense>
+        ) : null}
 
         {activeTab === "tech" ? (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
@@ -1149,7 +1294,7 @@ export function HomeRoute() {
               />
             </div>
           </div>
-          <div className="mt-4 grid min-h-0 flex-1 gap-3 lg:grid-cols-5">
+          <div className="mt-4 grid min-h-0 flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {columns.map((column) => (
               <div
                 key={column}
@@ -1202,7 +1347,7 @@ export function HomeRoute() {
           </div>
         </section> : null}
 
-        <TeamDetailDialog
+        {teamDetailOpen ? <Suspense fallback={null}><TeamDetailDialog
           open={teamDetailOpen}
           onOpenChange={setTeamDetailOpen}
           team={selectedTeam && {
@@ -1217,7 +1362,7 @@ export function HomeRoute() {
             statboticsEpa: statboticsEpaByTeamId[selectedTeam._id],
             stats: teamStats[selectedTeam._id],
           }}
-        />
+        /></Suspense> : null}
       </div>
     </main>
   )

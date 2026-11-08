@@ -1,4 +1,5 @@
-import { CalendarDays, ClipboardList, Home, Images, KeyRound, ListChecks, Radar, Wrench } from "lucide-react"
+import { useState } from "react"
+import { CalendarDays, ClipboardList, Home, Images, KeyRound, ListChecks, Menu, Radar, Wrench } from "lucide-react"
 
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
@@ -41,10 +42,11 @@ export function AppNav({
   role: UserRole
 }) {
   const visibleNavItems = navItems.filter((item) => canSeeTab(item.tab as AppTab, role))
+  const [menuOpen, setMenuOpen] = useState(false)
 
   return (
     <>
-      <div className="hidden items-center gap-2 md:flex">
+      <nav aria-label="Main" className="hidden items-center gap-1 xl:flex">
         {visibleNavItems.map((item) => (
           <button
             key={item.label}
@@ -59,25 +61,29 @@ export function AppNav({
             {item.label}
           </button>
         ))}
-      </div>
-      <div className="md:hidden">
-        <Sheet>
-          <SheetTrigger className="inline-flex h-7 items-center justify-center rounded-md border border-border bg-background px-2.5 text-sm font-medium hover:bg-muted">
-            Menu
+      </nav>
+      <div className="xl:hidden">
+        <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+          <SheetTrigger className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium hover:bg-muted">
+            <Menu className="size-4" />
+            {visibleNavItems.find((item) => item.tab === activeTab)?.label ?? "Menu"}
           </SheetTrigger>
           <SheetContent side="right">
-            <div className="flex h-full flex-col gap-3 pt-8">
+            <div className="flex h-full flex-col gap-1 overflow-y-auto px-2 pt-10 pb-[max(1rem,env(safe-area-inset-bottom))]">
               {visibleNavItems.map((item) => (
                 <button
                   key={item.label}
                   type="button"
                   className={cn(
-                    "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium hover:bg-muted",
+                    "nav-pill inline-flex h-12 items-center gap-3 rounded-lg px-3 text-base font-medium hover:bg-muted",
                     activeTab === item.tab && "bg-primary text-primary-foreground hover:bg-primary",
                   )}
-                  onClick={() => onTabChange(item.tab as AppTab)}
+                  onClick={() => {
+                    onTabChange(item.tab as AppTab)
+                    setMenuOpen(false)
+                  }}
                 >
-                  <item.icon className="size-4" />
+                  <item.icon className="size-5" />
                   {item.label}
                 </button>
               ))}
