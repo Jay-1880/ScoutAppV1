@@ -35,7 +35,9 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
             throw new ConvexError("BAD_TEAM_CODE")
           }
         }
-        return { email, name: String(params.name ?? "").trim().slice(0, 40) || undefined }
+        // Convex values can't be `undefined`, so only include name when set.
+        const name = String(params.name ?? "").trim().slice(0, 40)
+        return name ? { email, name } : { email }
       },
       validatePasswordRequirements(password) {
         if (password.length < 8 || password.length > 128) {
