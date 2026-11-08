@@ -563,12 +563,14 @@ export const upsertImportedEvent = mutation({
 export const savePitReport = mutation({
   args: {
     teamId: v.id("teams"),
-    scoreAnywhere: v.boolean(),
-    scoreSpecificSpots: v.boolean(),
+    shotRange: v.union(v.literal("none"), v.literal("close"), v.literal("mid"), v.literal("long")),
     shootOnMove: v.boolean(),
-    climbLow: v.boolean(),
-    climbMid: v.boolean(),
-    climbHigh: v.boolean(),
+    groundIntake: v.boolean(),
+    humanPlayerIntake: v.boolean(),
+    fuelCapacity: v.optional(v.number()),
+    autoFuelClaim: v.optional(v.number()),
+    autoClimb: v.boolean(),
+    maxClimb: v.union(v.literal("none"), v.literal("l1"), v.literal("l2"), v.literal("l3")),
     traverse: v.union(v.literal("trench"), v.literal("bump"), v.literal("both"), v.literal("other")),
     drivetrain: v.string(),
     notes: v.optional(v.string()),
@@ -579,6 +581,8 @@ export const savePitReport = mutation({
     const team = await ctx.db.get(args.teamId)
     if (!team) throw new Error("Team not found")
     if ((args.photoIds ?? []).length > 6) throw new Error("Up to 6 photos per pit report.")
+    if (args.fuelCapacity !== undefined) checkCount("Fuel capacity", args.fuelCapacity, 200)
+    if (args.autoFuelClaim !== undefined) checkCount("Auto fuel", args.autoFuelClaim, 200)
     const existing = await ctx.db
       .query("pitReports")
       .withIndex("teamId", (q) => q.eq("teamId", args.teamId))
@@ -587,12 +591,18 @@ export const savePitReport = mutation({
       eventId: team.eventId,
       teamId: args.teamId,
       scoutUserId: existing?.scoutUserId ?? userId,
-      scoreAnywhere: args.scoreAnywhere,
-      scoreSpecificSpots: args.scoreSpecificSpots,
+      shotRange: args.shotRange,
       shootOnMove: args.shootOnMove,
-      climbLow: args.climbLow,
-      climbMid: args.climbMid,
-      climbHigh: args.climbHigh,
+      groundIntake: args.groundIntake,
+      humanPlayerIntake: args.humanPlayerIntake,
+      fuelCapacity: args.fuelCapacity,
+      autoFuelClaim: args.autoFuelClaim,
+      autoClimb: args.autoClimb,
+      maxClimb: args.maxClimb,
+      // Filled in for older screens that still read the original fields
+      climbLow: args.maxClimb !== "none",
+      climbMid: args.maxClimb === "l2" || args.maxClimb === "l3",
+      climbHigh: args.maxClimb === "l3",
       traverse: args.traverse,
       drivetrain: args.drivetrain.trim().slice(0, 40),
       notes: args.notes?.trim().slice(0, 2000) || undefined,
@@ -626,13 +636,16 @@ export const savePitReport = mutation({
 })
 
 const matchTagValidator = v.union(
-  v.literal("fast"),
-  v.literal("accurate"),
-  v.literal("good_driver"),
-  v.literal("plays_defense"),
-  v.literal("tippy"),
-  v.literal("broke_down"),
-  v.literal("inconsistent"),
+  v.literal("fast_cycles"),
+  v.literal("shoots_while_moving"),
+  v.literal("fed_partners"),
+  v.literal("played_defense"),
+  v.literal("defended_well_against"),
+  v.literal("wasted_inactive_hub"),
+  v.literal("used_trench"),
+  v.literal("tipped_over"),
+  v.literal("disabled"),
+  v.literal("no_show"),
 )
 
 function checkCount(label: string, value: number, max: number) {
@@ -657,6 +670,9 @@ export const saveMatchReport = mutation({
     endgameNotes: v.optional(v.string()),
     driverRating: v.number(),
     defenseRating: v.number(),
+    autoClimb: v.optional(v.boolean()),
+    accuracy: v.optional(v.union(v.literal("high"), v.literal("mid"), v.literal("low"))),
+    fouls: v.optional(v.number()),
     tags: v.array(matchTagValidator),
   },
   handler: async (ctx, args) => {
@@ -665,6 +681,7 @@ export const saveMatchReport = mutation({
     checkCount("Teleop balls scored", args.teleopBallsScored, 500)
     checkCount("Driver rating", args.driverRating, 10)
     checkCount("Defense rating", args.defenseRating, 10)
+    if (args.fouls !== undefined) checkCount("Fouls", args.fouls, 30)
     const match = await ctx.db.get(args.matchId)
     const team = await ctx.db.get(args.teamId)
     if (!match || !team) throw new Error("Match or team not found")
@@ -692,6 +709,9 @@ export const saveMatchReport = mutation({
       endgameNotes: cleanNote(args.endgameNotes),
       driverRating: args.driverRating,
       defenseRating: args.defenseRating,
+      autoClimb: args.autoClimb,
+      accuracy: args.accuracy,
+      fouls: args.fouls,
       tags: [...new Set(args.tags)],
     }
     const existingForTeam = await ctx.db
