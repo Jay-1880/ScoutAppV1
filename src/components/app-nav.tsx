@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { CalendarDays, ClipboardList, Home, Images, KeyRound, ListChecks, Menu, Radar, Wrench } from "lucide-react"
+import { BarChart3, CalendarDays, ClipboardList, Home, Images, KeyRound, ListChecks, Menu, Radar, Wrench } from "lucide-react"
 
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 
 const navItems = [
   { label: "Dashboard", icon: Home, tab: "dashboard" },
+  { label: "Data", icon: BarChart3, tab: "data" },
   { label: "Teams", icon: ClipboardList, tab: "teams" },
   { label: "Pit scouting", icon: Radar, tab: "pit" },
   { label: "Pit crew", icon: ClipboardList, tab: "pitCrew" },
@@ -17,12 +18,12 @@ const navItems = [
   { label: "Mentor", icon: KeyRound, tab: "admin" },
 ]
 
-type AppTab = "dashboard" | "teams" | "pit" | "pitCrew" | "matches" | "picklist" | "tech" | "gallery" | "admin"
+type AppTab = "dashboard" | "data" | "teams" | "pit" | "pitCrew" | "matches" | "picklist" | "tech" | "gallery" | "admin"
 type UserRole = "mentor" | "lead_scout" | "pit" | "tech" | "scout"
 
 function canSeeTab(tab: AppTab, role: UserRole) {
   if (role === "mentor") return true
-  if (tab === "dashboard" || tab === "gallery") return true
+  if (tab === "dashboard" || tab === "data" || tab === "gallery") return true
   if (tab === "teams") return role === "lead_scout" || role === "pit" || role === "tech" || role === "scout"
   if (tab === "pit") return role === "pit" || role === "lead_scout" || role === "scout"
   if (tab === "pitCrew") return role === "pit" || role === "lead_scout"
